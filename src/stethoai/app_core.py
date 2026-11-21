@@ -271,7 +271,7 @@ class Store:
         return number // 100 if number >= 100 else number
 
     @_serialized
-    def create_trial(self, path, case, site, trial, mode, rater):
+    def create_trial(self, path, case, site, trial, mode, rater, *, unique=False):
         case, site, rater = _code(case), _code(site), _code(rater)
         if site not in self.protocol['site_codes'] or mode not in self.protocol['modes']:
             raise ValueError('Site/mode must be in the provisional protocol')
@@ -295,6 +295,10 @@ class Store:
             if destination.read_bytes() != raw:
                 raise ValueError('Recording exists; cannot overwrite. Use a new trial number.')
         else:
+            # The app passes unique=True: one file must not stand for two sites or trials (fake repeatability).
+            for other in (sorted((self.root / 'recordings').glob(f'{case}_*.wav')) if unique else ()):
+                if other.read_bytes() == raw:
+                    raise ValueError(f'This file is already saved as {other.stem}. Attach the recording made here.')
             destination.write_bytes(raw)
         rows = self.table('rater_study')
         if not any(r['trial_id'] == tid for r in rows):
@@ -393,7 +397,12 @@ class Store:
         row = self._locked(trial_id)
         if not row['ai_prediction_id']:
             raise ValueError('View the AI finding before recording an assisted answer')
-        row.update(assisted_label=_label(label), assisted_at=_now())
+        label = _label(label)
+        if row['assisted_label']:  # A signature is final: repeating it changes nothing, changing it is refused.
+            if row['assisted_label'] != label:
+                raise ValueError('Final finding is already signed and cannot change')
+            return
+        row.update(assisted_label=label, assisted_at=_now())
         self._update_trial(row)
 
     @_serialized

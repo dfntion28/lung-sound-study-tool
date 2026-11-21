@@ -6,6 +6,7 @@ Findings are always written in words, never colour alone.
 from html import escape
 from pathlib import Path
 import hmac
+import tempfile
 import os
 import re
 import sys
@@ -20,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / 'src') not in sys.path:
     sys.path.insert(0, str(ROOT / 'src'))
 
-from stethoai.app_core import LABELS, MANUAL_LABELS, Store, load_frozen
+from stethoai.app_core import LABELS, MANUAL_LABELS, Store, check_audio, decodable, load_frozen
 from stethoai.drive_store import DriveClient, DriveError, DriveState, DriveStore
 
 PRODUCT = 'Lung Sound Record'
@@ -32,6 +33,11 @@ SITE_GROUPS = (('Anterior chest', ('ARU', 'ALU', 'ARL', 'ALL')),
                ('Posterior chest', ('PRU', 'PLU', 'PRL', 'PLL')))
 SITE_ORDER = tuple(code for _, codes in SITE_GROUPS for code in codes)
 MODE_NAMES = {'BELL': 'Bell', 'DIA': 'Diaphragm'}
+# Diaphragm is listed first and chosen by default: the protocol records in lung (diaphragm) mode (D-097).
+MODE_ORDER = ('DIA', 'BELL')
+MODE_HELP = {'DIA': 'For higher-pitched sounds, such as most breath sounds, crackles and wheezes.',
+             'BELL': 'For low-pitched sounds.'}
+DRAFT_STATUS = 'Attached, not saved yet'
 # Public project website (D-087, D-088); the tool links back to it from sign-in and every footer.
 WEBSITE_URL = 'https://lung-sound-study.pages.dev'
 FINDINGS = {'N': 'No adventitious sounds', 'C': 'Crackles', 'W': 'Wheezes',
@@ -105,20 +111,19 @@ input[type="text"],input[type="password"],input[type="number"],[data-baseweb="se
 [data-testid="stRadio"] [role="radiogroup"] label{min-height:48px;margin:0;padding:.45rem .5rem;width:100%;border-bottom:1px solid var(--rule);display:flex;align-items:center;}
 [data-testid="stRadio"] [role="radiogroup"] label:has(input:checked){background:var(--selected);}
 [data-testid="stRadio"] [role="radiogroup"] label p{font-weight:550;}
-.st-key-mode_row [role="radiogroup"]{flex-direction:row;align-items:center!important;border-top:0;gap:.5rem;}
-.st-key-mode_row [role="radiogroup"] label{width:auto!important;flex:1 1 auto;min-width:max-content;border:1px solid var(--rule-strong);border-radius:var(--radius);}
 [data-testid="stFileUploaderDropzone"]{min-height:64px;border:1px dashed var(--rule-strong);border-radius:var(--radius);background:var(--sheet);}
-:focus-visible,button:focus-visible,a:focus-visible,label:focus-within{outline:3px solid var(--focus)!important;outline-offset:1px;}
+[data-testid="stFileUploaderDropzone"] button{min-height:44px;min-width:88px;}
+[data-testid="stNumberInputStepDown"],[data-testid="stNumberInputStepUp"]{min-width:44px!important;min-height:44px!important;}
+[data-testid="stNumberInputContainer"]{min-height:46px;}
+:focus-visible,button:focus-visible,a:focus-visible,label:has(:focus-visible){outline:3px solid var(--focus)!important;outline-offset:1px;}
 [data-testid="stHeaderActionElements"]{display:none!important;}
 [data-testid="stElementContainer"]:has([data-testid="stRadio"]),[data-testid="stRadio"],[data-testid="stRadio"]>div,[data-testid="stRadio"] [role="radiogroup"]{width:100%!important;}
 [data-testid="stRadio"] [role="radiogroup"]>label,[data-testid="stRadio"] [role="radiogroup"]>div{width:100%!important;max-width:none!important;}
-.st-key-mode_row [role="radiogroup"]>label,.st-key-mode_row [role="radiogroup"]>div{width:auto!important;flex:1 1 auto;min-width:max-content;}
-.st-key-mode_row [role="radiogroup"] label p{white-space:nowrap;}
 [class*="st-key-row_"],[class*="st-key-row_"] [data-testid="stElementContainer"],[class*="st-key-row_"] .stButton,[class*="st-key-row_"] [data-testid="stTooltipHoverTarget"]{width:100%!important;}
 [class*="st-key-row_"] .stButton button{width:100%!important;min-height:52px;}
 /* Flowsheet */
 .st-key-sheet [data-testid="stHorizontalBlock"]{align-items:flex-start;}
-[class*="st-key-sign_"],[class*="st-key-save_"],[class*="st-key-again_"],[class*="st-key-next_"],
+[class*="st-key-sign_"],[class*="st-key-save_"],[class*="st-key-again_"],[class*="st-key-next_"],[class*="st-key-replace_"],[class*="st-key-replace_"] .stButton,
 [class*="st-key-sign_"] .stButton,[class*="st-key-save_"] .stButton,[class*="st-key-again_"] .stButton,[class*="st-key-next_"] .stButton,
 [data-testid="stElementContainer"]:has([data-testid="stFormSubmitButton"]),[data-testid="stFormSubmitButton"]{width:100%!important;}
 /* Chest chart */
@@ -155,6 +160,18 @@ input[type="text"],input[type="password"],input[type="number"],[data-baseweb="se
 .legend{display:flex;flex-wrap:wrap;gap:.3rem 1rem;color:var(--muted);font-size:.92rem;}
 .legend span{display:inline-flex;align-items:center;gap:.4rem;}
 .mk{display:inline-grid;place-items:center;width:18px;height:18px;box-sizing:border-box;border-radius:50%;border:2px solid var(--ink);background:#fff;font-size:11px;font-weight:800;font-style:normal;line-height:1;}
+.saved{color:var(--n);font-weight:600;}
+.unsaved{margin:.6rem 0 .3rem;font-size:.92rem;color:var(--ink);}
+.st-key-unsaved_sites{margin-bottom:.75rem;} .st-key-unsaved_links{gap:.4rem;flex-wrap:wrap;}
+.st-key-unsaved_links .stButton{width:auto!important;} .st-key-unsaved_links button{min-height:44px;width:auto;}
+input::placeholder{color:var(--muted)!important;opacity:1;}
+.draft-file dd{overflow-wrap:anywhere;}
+/* Options with a description: the row holds label and description together. */
+[data-testid="stRadio"] [role="radiogroup"]>div:has([data-testid="stRadioCaption"]){border-bottom:1px solid var(--rule);padding-bottom:.45rem;}
+[data-testid="stRadio"] [role="radiogroup"]>div:has([data-testid="stRadioCaption"]) label{border-bottom:0;min-height:40px;padding-bottom:0;}
+[data-testid="stRadio"] [role="radiogroup"]>div[data-selected="true"]:has([data-testid="stRadioCaption"]){background:var(--selected);}
+[data-testid="stRadio"] [role="radiogroup"]>div[data-selected="true"]:has([data-testid="stRadioCaption"]) label{background:transparent;}
+[data-testid="stRadioCaption"]{padding:0 .5rem 0 2.15rem;} [data-testid="stRadioCaption"] p{font-size:.9rem!important;margin:0;}
 .mk.half{background:linear-gradient(90deg,var(--ink) 50%,#fff 50%);} .mk.done{background:var(--ink);color:#fff;} .mk.again{border-color:var(--problem);color:var(--problem);}
 .place{margin:.1rem 0 .7rem;line-height:1.5;}
 [class*="st-key-row_"] .stButton button{justify-content:flex-start;text-align:left;border:0;border-bottom:1px solid var(--rule);border-radius:0;background:transparent;font-weight:500;padding:.3rem .4rem;}
@@ -184,7 +201,18 @@ input[type="text"],input[type="password"],input[type="number"],[data-baseweb="se
 .prose{max-width:68ch;}
 @media (min-width:900px){h1{font-size:1.65rem!important;} .st-key-masthead{flex-direction:row;align-items:center;justify-content:space-between;}
   .st-key-masthead>div{width:auto!important;}}
-@media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+/* Motion (D-100): feedback and continuity only. */
+@keyframes arrive{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+@keyframes settle{from{opacity:0;}to{opacity:1;}}
+@keyframes stamp{0%{transform:scale(.55);}60%{transform:scale(1.18);}100%{transform:scale(1);}}
+[class*="st-key-site_"]{animation:arrive .24s cubic-bezier(.16,1,.3,1) both;}
+.saved,.unsaved,.draft-file{animation:settle .2s ease-out both;}
+.stButton button:active:not(:disabled),[data-testid="stFormSubmitButton"] button:active{transform:scale(.98);}
+.stButton button,[data-testid="stFormSubmitButton"] button{transition:background-color .15s ease-out,color .15s ease-out,transform .1s ease-out;}
+[class*="st-key-pick_"] button::before{transition:transform .15s ease-out,box-shadow .2s ease-out;}
+[data-testid="stRadio"] [role="radiogroup"] label{transition:background-color .15s ease-out;}
+@media (max-width:640px){[data-testid="stHorizontalBlock"]{gap:1.5rem!important;}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;}}
 </style>'''
 
 LOGIN_CSS = '''<style>
@@ -263,6 +291,8 @@ def open_store():
 
 def setup(title):
     """Page chrome shared by every screen."""
+    # A tap's busy mark belongs to this run only, so an interrupted save never fires again later.
+    st.session_state['busy_now'] = st.session_state.pop('busy', None)
     st.set_page_config(page_title=f'{title} | {PRODUCT}', page_icon=str(ROOT / 'app/lung_icon.png'),
                        layout='wide', initial_sidebar_state='collapsed')
     st.markdown(CSS, unsafe_allow_html=True)
@@ -408,7 +438,7 @@ def timeline(path, segments):
             f'{bands}{bars}</div><div class="timeline-key"><span>0:00 to {clock(duration)}</span>{key}</div>')
 
 
-def analysis_panel(result, path, trial_id):
+def analysis_panel(result, path, trial_id, signed=False):
     code = result['finding']
     css, title, guidance = FINDING_STYLE[code]
     segments = [] if code == 'Q' else marked_segments(result['window_outputs'])
@@ -416,6 +446,9 @@ def analysis_panel(result, path, trial_id):
         guidance = f"{qc_words(result['qc_reason'])}."
     elif code == 'N' and segments:
         guidance = 'Most of the recording showed no pattern. Listen again at the marked times before you sign.'
+    if signed:  # After signing, the marked times are a record, not an instruction.
+        guidance = guidance.replace('Listen again at the marked times before you sign.',
+                                    'The marked times show where the pattern was found.')
     st.markdown(f'<div class="pattern {css}" role="status">'
                 f'<div><b>{escape(title)}</b><span class="why">{escape(guidance)}</span></div></div>',
                 unsafe_allow_html=True)
@@ -441,3 +474,167 @@ def analysis_panel(result, path, trial_id):
         ending = 'showed no crackle or wheeze' if code == 'N' else 'showed this pattern'
         basis = f'{count} of {len(windows)} overlapping 3-second segments {ending}.'
     st.caption(f'{basis} This describes the sound only. It is not a diagnosis.')
+
+
+# Unsaved work and slow saves (D-098, D-099).
+# Streamlit forgets a widget's value once it leaves the screen, so attached files and chosen findings are
+# copied into plain session keys and shown again when the examiner returns to the site.
+
+def assessment_tag(assessment):
+    return f"{assessment['case']}_{assessment['examiner']}_{assessment['mode']}_T{assessment['round']}"
+
+
+def drafts():
+    """Attached files not saved yet, keyed by assessment, site and stored trial number."""
+    return st.session_state.setdefault('drafts', {})
+
+
+def picks():
+    """Findings chosen but not saved yet, keyed by their radio key."""
+    return st.session_state.setdefault('picks', {})
+
+
+def draft_key(assessment, site, number):
+    return f'{assessment_tag(assessment)}_{site}_{number}'
+
+
+def keep_pick(key):
+    picks()[key] = st.session_state.get(key)
+
+
+def restore_pick(key):
+    """Put a chosen-but-unsaved finding back before its radio is drawn again."""
+    if key not in st.session_state and picks().get(key) is not None:
+        st.session_state[key] = picks()[key]
+
+
+def unsaved_sites(assessment, rows):
+    """Sites of this assessment holding an attached file or a chosen finding that is not saved."""
+    prefix, found = assessment_tag(assessment) + '_', []
+    for site in SITE_ORDER:
+        row = rows.get(site)
+        if any(k.startswith(f'{prefix}{site}_') for k in drafts()):
+            found.append(site)
+        elif row and ((not row['manual_locked_at'] and picks().get(f"initial_{row['trial_id']}")) or
+                      (row['manual_locked_at'] and not row['assisted_label'] and picks().get(f"final_{row['trial_id']}"))):
+            found.append(site)
+    return found
+
+
+def _decoded_copy(store, data):
+    """Write bytes to a private temp file and return (raw path, decodable path)."""
+    with tempfile.NamedTemporaryFile(dir=store.root, suffix='.upload', delete=False) as handle:
+        handle.write(data)
+        raw = Path(handle.name)
+    return raw, decodable(raw)
+
+
+def attach_file(store, name, data):
+    """Check an attached file once. The result stays with the site until it is saved or replaced."""
+    raw, readable = _decoded_copy(store, data)
+    try:
+        return dict(name=name, data=data, quality=check_audio(readable))
+    finally:
+        readable.unlink(missing_ok=True)
+        raw.unlink(missing_ok=True)
+
+
+def save_draft(store, assessment, site, number, draft):
+    """Store an attached file as a trial. Saving the same file twice keeps one record."""
+    raw, readable = _decoded_copy(store, draft['data'])
+    try:
+        return store.create_trial(readable, assessment['case'], site, number, assessment['mode'],
+                                  assessment['examiner'], unique=True)
+    finally:
+        readable.unlink(missing_ok=True)
+        raw.unlink(missing_ok=True)
+
+
+def saving_words(store, what):
+    where = 'the team folder' if isinstance(store, DriveStore) else 'the study record'
+    return f'Saving {what} to {where}...'
+
+
+def _mark_busy(key):
+    st.session_state['busy'] = key
+
+
+def action_button(label, key, disabled=False):
+    """Primary button that greys out while its save runs, so a second tap cannot repeat it.
+
+    Returns True on the run that should do the work. The busy mark lasts one run only, so an
+    interrupted save never leaves the button stuck.
+    """
+    running = st.session_state.get('busy_now') == key
+    st.button(label, type='primary', key=key, disabled=disabled or running, on_click=_mark_busy, args=(key,))
+    return running
+
+
+def fail(site, key, message, kind='retry'):
+    """Keep a save error for the next run, where the site's panel shows it beside a ready button."""
+    st.session_state['failed'] = dict(site=site, key=key, message=message, kind=kind)
+    st.rerun()
+
+
+def take_failure(site):
+    """The last save error for this site, shown once under the status line."""
+    failed = st.session_state.get('failed')
+    if failed and failed['site'] == site:
+        return st.session_state.pop('failed')
+    return None
+
+
+def is_conflict(error):
+    """A clash with what is already stored; pressing the button again cannot help."""
+    return str(error).startswith(('Final finding is already signed', 'Manual label is locked'))
+
+
+def prune_saved(assessment, rows):
+    """Forget drafts and picks whose save already finished, for example after a tap interrupted the run."""
+    prefix = assessment_tag(assessment) + '_'
+    for key in [k for k in drafts() if k.startswith(prefix)]:
+        code, _, number = key[len(prefix):].partition('_')
+        row = rows.get(code)
+        if row and str(parse_trial(row['trial_id'])['number']) == number:
+            del drafts()[key]
+    for row in rows.values():
+        if row['manual_locked_at']:
+            picks().pop(f"initial_{row['trial_id']}", None)
+        if row['assisted_label']:
+            picks().pop(f"final_{row['trial_id']}", None)
+
+
+def held_anywhere():
+    """Any attached file or chosen finding not saved, in any assessment of this session."""
+    return bool(drafts()) or any(v is not None for v in picks().values())
+
+
+def flash(message):
+    st.session_state['flash'] = message
+
+
+def flash_text():
+    """The last save's confirmation, shown once."""
+    return escape(st.session_state.pop('flash', '') or '')
+
+
+PLAIN_ERRORS = {
+    'Recording exists': 'A different recording is already stored for this site and trial.',
+    'Final finding is already signed': 'This site was already signed with another finding, perhaps from another screen.',
+    'Manual label is locked': 'A different first finding was already saved for this site, perhaps from another screen.',
+}
+
+
+def plain_error(error):
+    """Storage messages in examiner words. Unknown messages pass through unchanged."""
+    text = str(error)
+    if text.startswith('This file is already saved as '):
+        rid = text.removeprefix('This file is already saved as ').split('.')[0]
+        try:
+            _, code, attempt, _ = rid.split('_')
+            where = (f"{'front' if code.startswith('A') else 'back'}, {SITE_NAMES[code].lower()}, "
+                     f'trial {Store.base_trial(int(attempt[1:]))}')
+        except (ValueError, KeyError):
+            return text
+        return f'This file is already saved for {where}.'
+    return next((words for start, words in PLAIN_ERRORS.items() if text.startswith(start)), text)

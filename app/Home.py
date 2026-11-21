@@ -2,7 +2,7 @@ from collections import defaultdict
 
 import streamlit as st
 
-from workflow_ui import (MODE_NAMES, clean_code, empty_state, footer, is_complete, open_assessment,
+from workflow_ui import (MODE_HELP, MODE_NAMES, MODE_ORDER, clean_code, empty_state, footer, is_complete, open_assessment,
                          parse_trial, setup)
 
 store = setup('Assessments')
@@ -13,11 +13,16 @@ left, right = st.columns([7, 5], gap='large')
 with right:
     st.subheader('New assessment')
     with st.form('new_assessment'):
-        case = st.text_input('Case code', max_chars=16)
-        examiner = st.text_input('Examiner code', max_chars=16, value=st.session_state.get('examiner', ''))
-        with st.container(key='mode_row'):
-            mode = st.radio('Stethoscope mode', store.protocol['modes'], horizontal=True, format_func=MODE_NAMES.get,
-                            index=store.protocol['modes'].index('DIA'))
+        case = st.text_input('Case code', max_chars=16, placeholder='For example, S01')
+        st.caption('The study code of the person examined, from the recording log. Never a name.')
+        examiner = st.text_input('Examiner code', max_chars=16, value=st.session_state.get('examiner', ''),
+                                 placeholder='For example, R01')
+        st.caption('Your own study code. Use the same one every time.')
+        # Stored values stay BELL and DIA so older records read the same (D-097).
+        modes = [m for m in MODE_ORDER if m in store.protocol['modes']]
+        mode = st.radio('Stethoscope mode', modes, format_func=MODE_NAMES.get, index=modes.index('DIA'),
+                        captions=[MODE_HELP[m] for m in modes], key='mode_choice')
+        st.caption('Choose the mode the stethoscope is set to. The recording protocol uses diaphragm (lung) mode.')
         round_number = int(st.number_input('Trial', min_value=1, max_value=99, value=1, step=1))
         start = st.form_submit_button('Start assessment', type='primary')
     st.caption('Trial 1 is the first recording at each site. Trial 2 is the repeat after lifting and replacing the chestpiece.')

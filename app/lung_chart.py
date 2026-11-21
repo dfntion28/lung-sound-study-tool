@@ -20,7 +20,7 @@ PLACEMENT = {
     'PLL': 'Level of T8 to T9, about two finger-widths below the tip of the left shoulder blade.',
 }
 STATE = {'Not started': 'open', 'Needs finding': 'half', 'Ready to sign': 'half', 'Signed': 'done',
-         'Record again': 'again'}
+         'Record again': 'again', 'Attached, not saved yet': 'open'}  # Unsaved work keeps the marker; words say it.
 
 TORSO = ('M166 0C166 30 160 42 132 50C92 60 44 66 26 96C16 116 20 170 30 230C38 300 44 390 52 470L348 470'
          'C356 390 362 300 370 230C380 170 384 116 374 96C356 66 308 60 268 50C240 42 234 30 234 0')
