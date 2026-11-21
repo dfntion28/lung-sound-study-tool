@@ -6,10 +6,10 @@ headless = true
 
 [theme]
 base = "light"
-primaryColor = "#0b5d6e"
-backgroundColor = "#f5f7f6"
-secondaryBackgroundColor = "#e8eef0"
-textColor = "#10303f"
+primaryColor = "#23427a"
+backgroundColor = "#eef1f3"
+secondaryBackgroundColor = "#e4e9ed"
+textColor = "#1a2430"
 font = "sans serif"
 
 [client]

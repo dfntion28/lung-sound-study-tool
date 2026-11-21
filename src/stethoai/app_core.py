@@ -265,6 +265,11 @@ class Store:
     def trial_number(trial_id):
         return int(Store.recording_id(trial_id).split('_')[2][1:])
 
+    @staticmethod
+    def base_trial(number):
+        """Protocol trial of a stored number. A retake of trial t is stored as t*100+k (T101 retakes T01)."""
+        return number // 100 if number >= 100 else number
+
     @_serialized
     def create_trial(self, path, case, site, trial, mode, rater):
         case, site, rater = _code(case), _code(site), _code(rater)
@@ -440,8 +445,18 @@ class Store:
 
     def _repeatability(self, rows):
         groups = defaultdict(dict)
+        latest = {}  # A retake replaces its original, so the pair is not a repeat.
+        for row in rows:
+            case, site, attempt, mode = self.recording_id(row['trial_id']).split('_')
+            number = int(attempt[1:])
+            key = (case, site, mode, self.base_trial(number))
+            latest[key] = max(latest.get(key, 0), number)
         for row in rows:
             rid = self.recording_id(row['trial_id'])
+            case, site, attempt, mode = rid.split('_')
+            number = int(attempt[1:])
+            if number != latest[(case, site, mode, self.base_trial(number))]:
+                continue
             groups[(row['case_code'], row['site_code'])][rid] = row['ai_finding']
         repeats = [list(g.values()) for g in groups.values() if len(g) >= 2]
         output = dict(n_groups=len(repeats), n_recordings=sum(map(len, repeats)),

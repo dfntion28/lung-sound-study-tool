@@ -1,25 +1,48 @@
-from workflow_ui import is_hosted, setup, site_note
+from collections import defaultdict
+
 import streamlit as st
 
-store = setup('Listen first. Then compare with the AI.')
-st.write('Record one chest site, lock your own answer, then see the AI acoustic finding as a second opinion. '
-         'For training and research with adults only. The AI never gives a diagnosis.')
-st.markdown('<ol class="steps" aria-label="Workflow steps"><li class="now"><span class="n">Step 1</span>Record</li>'
-            '<li><span class="n">Step 2</span>Nurse answer</li><li><span class="n">Step 3</span>AI finding</li>'
-            '<li><span class="n">Step 4</span>Review</li></ol>', unsafe_allow_html=True)
-with st.container(key='nextlink_home'):
-    st.page_link('pages/1_Record.py', label='Start: record a site', icon=':material/mic:')
-st.caption('Your answer is locked before the AI finding appears, so the AI cannot change your first answer.')
-site_note(store)
-st.subheader('Other tools')
-st.page_link('pages/4_Review_queue.py', label='Review disagreements', icon=':material/rule:')
-st.page_link('pages/5_Analytics.py', label='Study results and CSV exports', icon=':material/table_chart:')
-st.page_link('pages/6_Model_card.py', label='What the AI was tested on and its limits', icon=':material/info:')
-if is_hosted():
-    st.caption('Recordings and study records are saved to the team\'s private Google Drive folder.')
-else:
-    with st.expander('Open the app on a phone (same Wi-Fi)'):
-        st.code(r'.venv\Scripts\python.exe -m streamlit run app/Home.py --server.address 0.0.0.0', language='powershell')
-        st.write('Keep the window running. On a phone on the same Wi-Fi, open the Network URL it prints, '
-                 'usually http://<PC address>:8501. Recordings and processing stay on this PC; no internet is needed.')
-        st.caption('Run one server per log folder. Set STETHOAI_LOG_ROOT before starting to choose another local log folder.')
+from workflow_ui import (MODE_NAMES, clean_code, empty_state, footer, is_complete, open_assessment,
+                         parse_trial, setup)
+
+store = setup('Assessments')
+st.title('Assessments')
+sites = store.protocol['site_codes']
+left, right = st.columns([7, 5], gap='large')
+
+with right:
+    st.subheader('New assessment')
+    with st.form('new_assessment'):
+        case = st.text_input('Case code', max_chars=16)
+        examiner = st.text_input('Examiner code', max_chars=16, value=st.session_state.get('examiner', ''))
+        with st.container(key='mode_row'):
+            mode = st.radio('Stethoscope mode', store.protocol['modes'], horizontal=True, format_func=MODE_NAMES.get,
+                            index=store.protocol['modes'].index('DIA'))
+        round_number = int(st.number_input('Trial', min_value=1, max_value=99, value=1, step=1))
+        start = st.form_submit_button('Start assessment', type='primary')
+    st.caption('Trial 1 is the first recording at each site. Trial 2 is the repeat after lifting and replacing the chestpiece.')
+    if start:
+        case_code, examiner_code = clean_code(case), clean_code(examiner)
+        if not case_code or not examiner_code:
+            st.error('Enter both codes. Each starts with a letter and uses only letters and numbers.')
+        else:
+            st.session_state['examiner'] = examiner_code
+            open_assessment(case_code, examiner_code, round_number, mode)
+
+with left:
+    st.subheader('Open a saved assessment')
+    groups = defaultdict(list)
+    for row in store.table('rater_study'):
+        info = parse_trial(row['trial_id'])
+        groups[(info['case'], info['examiner'], info['round'], info['mode'])].append(row)
+    if not groups:
+        empty_state('No assessments yet', ' Start one with a case code and your examiner code.')
+    for key in sorted(groups):
+        case_code, examiner_code, round_number, mode = key
+        done = sum(is_complete(row) for row in groups[key])
+        label = (f'Case {case_code}, trial {round_number}, {MODE_NAMES[mode].lower()}, examiner {examiner_code}. '
+                 f'{done} of {len(sites)} sites signed.')
+        with st.container(key=f'row_home_{case_code}_{examiner_code}_{round_number}_{mode}'):
+            if st.button(label, key=f'open_{case_code}_{examiner_code}_{round_number}_{mode}'):
+                open_assessment(case_code, examiner_code, round_number, mode)
+footer()
