@@ -42,7 +42,9 @@ st.subheader('Analysis repeatability')
 repeat = metrics['repeatability']
 st.write(f"Repeated case and site groups: {repeat['n_groups']}. Distinct recordings: {repeat['n_recordings']}")
 st.write(f"Self-agreement (%): {fmt(repeat['self_agreement_pct'], 1)}. Fleiss κ: {fmt(repeat['fleiss_kappa'])}")
-st.caption(repeat['method'] + ' These results describe the recordings saved in this tool; they do not validate the '
+st.caption('Self-agreement is the percentage of pairs of recordings from the same examiner, case and site on which the '
+           'analysis gave the same result. Fleiss’ κ corrects this agreement for chance and needs at least two repeated '
+           'case and site groups. These results describe the recordings saved in this tool; they do not validate the '
            'analysis on the Hanhong stethoscope.')
 st.subheader('Expert reference')
 rows = store.table('rater_study')
