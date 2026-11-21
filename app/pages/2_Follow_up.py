@@ -4,11 +4,11 @@ fresh_modules.refresh()
 
 import streamlit as st
 
-from workflow_ui import (MODE_NAMES, SITE_NAMES, empty_state, footer, is_replaced, open_assessment, parse_trial,
+from workflow_ui import (heading, MODE_NAMES, SITE_NAMES, empty_state, footer, is_replaced, open_assessment, parse_trial,
                          session_examiner, setup, site_status, trial_words)
 
 store = setup('Follow-up')
-st.title('Follow-up')
+heading('Follow-up')
 st.markdown('<p class="prose">Each recording here differs from its analysis or from the other recording at its site, '
             'or is uncertain.</p>', unsafe_allow_html=True)
 examiner = session_examiner()

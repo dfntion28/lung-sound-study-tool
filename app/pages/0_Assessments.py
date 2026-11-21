@@ -6,11 +6,11 @@ from collections import defaultdict
 
 import streamlit as st
 
-from workflow_ui import (MODE_HELP, MODE_NAMES, MODE_ORDER, clean_code, empty_state, footer, held_anywhere,
+from workflow_ui import (heading, MODE_HELP, MODE_NAMES, MODE_ORDER, clean_code, empty_state, footer, held_anywhere,
                          open_assessment, own_rows, parse_trial, session_examiner, setup, signed_pairs, walk)
 
 store = setup('Assessments')
-st.title('Assessments')
+heading('Assessments')
 examiner = session_examiner()
 if not examiner:
     # Blinding (D-106): the code is entered once per session and only its own records are listed.

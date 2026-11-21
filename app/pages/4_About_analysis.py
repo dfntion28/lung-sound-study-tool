@@ -4,10 +4,10 @@ fresh_modules.refresh()
 
 import streamlit as st
 
-from workflow_ui import footer, setup
+from workflow_ui import heading, footer, setup
 
 setup('About the analysis')
-st.title('About the analysis')
+heading('About the analysis')
 st.markdown('''<div class="prose">
 
 ## Purpose

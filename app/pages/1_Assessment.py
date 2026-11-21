@@ -9,7 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from lung_chart import PLACEMENT, chest_chart
-from workflow_ui import (DRAFT_STATUS, LISTEN_AGAIN, open_number, recording_words, steps_at, walk, FINDINGS, MODE_NAMES, SITE_GROUPS, SITE_NAMES, SITE_ORDER, action_button,
+from workflow_ui import (heading, DRAFT_STATUS, LISTEN_AGAIN, open_number, recording_words, steps_at, walk, FINDINGS, MODE_NAMES, SITE_GROUPS, SITE_NAMES, SITE_ORDER, action_button,
                          analysis_panel, assessment_from_url, attach_file, draft_key, drafts, empty_state, fail, flash, flash_text, footer,
                          AnalysisTrace, record_place, get_model, model_state, held_anywhere, is_complete, is_conflict, keep_in_url, keep_pick, next_retake, parse_trial, picks,
                          next_step, plain_error, prune_saved, qc_words, restore_pick, save_draft, saving_words, session_examiner,
@@ -27,14 +27,14 @@ if not assessment:  # After a reload the session is new; reopen the case and sit
             st.session_state['chart_view'] = 'front' if url_site.startswith('A') else 'back'
             st.session_state['focus_work'] = True  # On phones, bring the reopened site into view.
 if not assessment:
-    st.title('Assessment')
+    heading('Assessment')
     empty_state('No assessment is open', ' Open or start one on the Assessments screen.')
     st.page_link('pages/0_Assessments.py', label='Go to Assessments')
     footer()
     st.stop()
 if assessment['examiner'] != session_examiner():
     # Blinding (D-106): another examiner's findings are never opened from this session.
-    st.title('Assessment')
+    heading('Assessment')
     empty_state('This assessment belongs to another examiner code',
                 ' Each examiner sees only their own assessments.')
     st.page_link('pages/0_Assessments.py', label='Go to Assessments')
@@ -58,7 +58,7 @@ rows = site_rows(store, assessment)
 keep_in_url(assessment, site)
 steps = walk(store, assessment)
 complete = len(signed_pairs(store, assessment))
-st.title(f"Case {assessment['case']}")
+heading(f"Case {assessment['case']}")
 st.caption(f"{MODE_NAMES[assessment['mode']]}, examiner {assessment['examiner']}. "
            f'{complete} of {len(steps)} recordings signed.')
 

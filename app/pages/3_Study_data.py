@@ -6,10 +6,10 @@ from html import escape
 
 import streamlit as st
 
-from workflow_ui import LABELS, MODE_NAMES, SITE_NAMES, footer, parse_trial, setup, trial_words
+from workflow_ui import heading, LABELS, MODE_NAMES, SITE_NAMES, footer, parse_trial, setup, trial_words
 
 store = setup('Study data')
-st.title('Study data')
+heading('Study data')
 st.markdown('<p class="prose">These results come from this tool\'s recordings, not from the model benchmark.</p>', unsafe_allow_html=True)
 metrics = store.analytics()
 

@@ -349,6 +349,27 @@ def frame(title):
                 st.page_link(path, label=label)
 
 
+HEADING_SLOT = '_heading_slot'
+
+
+def heading(text):
+    """The page heading. The entry script draws it first, outside the page, because a page switch removes every
+    element the old page drew at once; an entry-script heading stays until the new one replaces it in place, so the
+    body is never empty. A page rewrites it only when its text differs. Without a slot (a page run alone) it is st.title."""
+    slot, drawn = st.session_state.pop(HEADING_SLOT, (None, None))
+    if text != drawn:
+        (slot or st).title(text)
+
+
+def first_heading(title):
+    """The heading the entry script draws before the page runs; for an assessment, its case code (session or URL)."""
+    if title != 'Assessment':
+        return title
+    opened = st.session_state.get('assessment')
+    case = opened['case'] if opened else clean_code(st.query_params.get('case', ''))
+    return f'Case {case}' if case else title
+
+
 def setup(title):
     """Per-page start: the busy mark for this run and the record store. The chrome is drawn by frame()."""
     # A tap's busy mark belongs to this run only, so an interrupted save never fires again later.
