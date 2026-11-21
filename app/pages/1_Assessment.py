@@ -11,7 +11,7 @@ import streamlit.components.v1 as components
 from lung_chart import PLACEMENT, chest_chart
 from workflow_ui import (DRAFT_STATUS, FINDINGS, MODE_NAMES, SITE_GROUPS, SITE_NAMES, SITE_ORDER, action_button,
                          analysis_panel, assessment_from_url, attach_file, draft_key, drafts, empty_state, fail, flash, flash_text, footer,
-                         get_model, held_anywhere, is_complete, is_conflict, keep_in_url, keep_pick, next_retake, parse_trial, picks,
+                         AnalysisTrace, record_place, get_model, model_state, held_anywhere, is_complete, is_conflict, keep_in_url, keep_pick, next_retake, parse_trial, picks,
                          next_step, plain_error, prune_saved, qc_words, restore_pick, save_draft, saving_words, session_examiner,
                          setup, signed_pairs, site_rows, site_status, take_failure, trial_count, unsaved_sites)
 
@@ -28,17 +28,16 @@ if not assessment:  # After a reload the session is new; reopen the case and sit
             st.session_state['focus_work'] = True  # On phones, bring the reopened site into view.
 if not assessment:
     st.title('Assessment')
-    empty_state('No assessment is open', ' Open a saved assessment or start a new one on the Assessments screen.')
-    st.page_link('Home.py', label='Go to Assessments')
+    empty_state('No assessment is open', ' Open or start one on the Assessments screen.')
+    st.page_link('pages/0_Assessments.py', label='Go to Assessments')
     footer()
     st.stop()
 if assessment['examiner'] != session_examiner():
     # Blinding (D-106): another examiner's findings are never opened from this session.
     st.title('Assessment')
-    empty_state('This assessment is under another examiner code',
-                ' An assessment opens only under the examiner code entered on the Assessments screen, so that '
-                'examiners do not see each other\'s findings.')
-    st.page_link('Home.py', label='Go to Assessments')
+    empty_state('This assessment belongs to another examiner code',
+                ' Each examiner sees only their own assessments.')
+    st.page_link('pages/0_Assessments.py', label='Go to Assessments')
     footer()
     st.stop()
 
@@ -62,13 +61,14 @@ complete = len(signed_pairs(store, assessment))
 st.title(f"Case {assessment['case']}")
 st.caption(f"Trial {assessment['round']}, {MODE_NAMES[assessment['mode']].lower()}, examiner {assessment['examiner']}. "
            f'{complete} of {len(order) * trials} recordings signed.')
-rounds = list(range(1, trials + 1))
-with st.container(key='trial_pick'):
-    chosen_round = st.selectbox('Trial', rounds, index=rounds.index(assessment['round']),
-                                format_func=lambda n: f'Trial {n}', key=f"round_{assessment['round']}")
-if chosen_round != assessment['round']:
-    st.session_state['assessment'] = {**assessment, 'round': chosen_round}  # The site stays: both trials are taken there.
-    st.rerun()
+# Two joined buttons, one tap each: a dropdown opened a text box and the phone keyboard for a two-way choice (D-112).
+st.markdown('<p class="seg-label">Trial</p>', unsafe_allow_html=True)
+with st.container(key='trial_switch', horizontal=True):
+    for number in range(1, trials + 1):
+        current = number == assessment['round']
+        if st.button(f'Trial {number}', key=f'trial_pick_{number}', type='primary' if current else 'secondary') and not current:
+            st.session_state['assessment'] = {**assessment, 'round': number}  # The site stays: both trials are taken there.
+            st.rerun()
 
 
 def retakes():
@@ -90,7 +90,7 @@ def capture(number=None):
     draft = drafts().get(key)
     st.subheader('Attach the recording' if draft is None else 'Check the recording')
     if draft is None:
-        st.write(f'Record for at least {minimum} seconds, then attach a WAV, FLAC, MP3 or M4A file.')
+        st.write(f'Attach a recording of at least {minimum} seconds (WAV, FLAC, MP3 or M4A).')
         upload = st.file_uploader('Recording file', key=f'upload_{key}')
         if upload is None:
             return
@@ -104,12 +104,10 @@ def capture(number=None):
         st.markdown(f'<p class="problem" role="alert">{qc_words(quality["qc_reason"])}. '
                     f'Record this site again for at least {minimum} seconds.</p>', unsafe_allow_html=True)
     else:
-        st.caption(f"The recording passed the automatic quality check ({quality['duration_s']:.1f} seconds). Listen to it "
-                   'before saving, and record again if talking or room noise can be heard.')
+        st.caption('The quality check passed. Record again if you hear talking or noise.')
         st.audio(draft['data'])
         # The case and site survive a reload through the URL; the attached file does not (D-098, D-108).
-        st.caption('Save before you leave the browser. If the page reloads, a file that is not saved '
-                   'must be attached again.')
+        st.caption('An unsaved file is lost on page reload.')
         duplicate = failure and failure['key'] == f'save_{key}' and failure['kind'] == 'duplicate'
         # After a same-file refusal Save cannot succeed; Replace file becomes the main action.
         running = False if duplicate else action_button('Save recording', f'save_{key}')
@@ -144,9 +142,7 @@ def document(row):
     restore_pick(key)
     label = st.radio('Your finding', list(FINDINGS), format_func=FINDINGS.get, index=None, key=key,
                      on_change=keep_pick, args=(key,))
-    chosen = f'You chose {FINDINGS[label].lower()}. ' if label else ''
-    st.caption(f'{chosen}Your first finding is locked when saved, so that it is recorded before you see the analysis. '
-               'The analysis runs after saving.')
+    st.caption('Your first finding is locked when saved, before you see the analysis.')
     if action_button('Save and run analysis', f'save_initial_{trial_id}', disabled=label is None):
         try:
             with st.spinner(saving_words(store, 'your finding')):
@@ -166,19 +162,24 @@ def review(row):
                 unsafe_allow_html=True)
     result = store.get_ai(trial_id)
     if result is None:
+        st.subheader('Acoustic analysis')
+        trace = AnalysisTrace(store.recording_path(trial_id), record_place(store))
+        for _ in range(3):  # Blank the first-finding controls left greyed from the last run while the analysis runs (D-116).
+            st.empty()
         try:
-            with st.spinner('Analyzing the recording...'):
-                result = store.analyze_trial(trial_id, get_model())
+            model = trace.load_model(get_model, model_state().get('ready', False))
+            store.analyze_trial(trial_id, model, trace.update)
+            trace.finish()
             st.rerun()
         except (ValueError, OSError, RuntimeError) as error:
+            trace.fail()
             st.error(f'The analysis did not finish. Your finding is saved. {error}')
             st.button('Try analysis again', key=f'retry_{trial_id}')
             return
     st.subheader('Acoustic analysis')
     analysis_panel(result, store.recording_path(trial_id), trial_id, signed=bool(row['assisted_label']))
     if result['finding'] == 'Q':
-        st.caption(f"The unusable recording is kept in the study record. Record this site again; the new recording "
-                   f"replaces it for trial {assessment['round']}.")
+        st.caption(f"The unusable recording stays in the study record; the new one replaces it for trial {assessment['round']}.")
         if st.button('Record this site again', type='primary', key=f'again_{trial_id}'):
             retakes()[retake_slot(parse_trial(trial_id)['site'])] = trial_id
             st.session_state['focus_work'] = True
@@ -191,10 +192,9 @@ def review(row):
     st.subheader('Final finding')
     key = f'final_{trial_id}'
     restore_pick(key)
-    final = st.radio('Choose what you will sign', list(FINDINGS), format_func=FINDINGS.get, index=None, key=key,
+    final = st.radio('Choose the finding to sign', list(FINDINGS), format_func=FINDINGS.get, index=None, key=key,
                      on_change=keep_pick, args=(key,))
-    chosen = f'You will sign {FINDINGS[final].lower()}. ' if final else ''
-    st.caption(f'{chosen}Once signed, the final finding is locked and becomes part of the study record.')
+    st.caption('A signed finding is locked in the study record.')
     if action_button('Sign final finding', f'sign_{trial_id}', disabled=final is None):
         try:
             with st.spinner(saving_words(store, 'your signed finding')):
@@ -233,8 +233,6 @@ with st.container(key='sheet'):
         stamped = st.session_state.pop('just_signed', None)
         if stamped:  # The marker of a site just signed fills in with a short stamp.
             st.html(f'<style>.st-key-pick_{stamped} button::before{{animation:stamp .42s cubic-bezier(.16,1,.3,1);}}</style>')
-        st.caption('The site positions follow the recording guide and remain provisional until the clinical adviser '
-                   'confirms them.')
         others = [code for code in unsaved if code != site]
         if others:
             with st.container(key='unsaved_sites'):
@@ -293,7 +291,7 @@ with st.container(key='sheet'):
                     else:
                         st.markdown(f'<p class="saved" role="status">All eight sites are signed for all {trials} trials.</p>',
                                     unsafe_allow_html=True)
-                        st.page_link('Home.py', label='Back to Assessments')
+                        st.page_link('pages/0_Assessments.py', label='Back to Assessments')
 footer()
 # A refresh or closed tab would lose unsaved work, so the browser asks first while any is held.
 components.html(f'<script>/*{time.time_ns()}*/window.parent.onbeforeunload='

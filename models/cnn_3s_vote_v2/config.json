@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "status": "frozen",
+  "model_version": "cnn_3s_vote_v2",
+  "frozen_date": "2026-11-22",
+  "frozen_decision": "D-113",
+  "model_family": "small_cnn (v1 architecture)",
+  "model_file": "model.pt",
+  "model_sha256": "943db6f8c1c9967f1434aba8e1b67fbe8f9b73d21ea627f341ad276cb9c07bc6",
+  "classes": [
+    "N",
+    "C",
+    "W",
+    "B"
+  ],
+  "output_classes": [
+    "N",
+    "C",
+    "W",
+    "B",
+    "U"
+  ],
+  "window_s": 3,
+  "hop_s": 1.5,
+  "aggregation": "vote",
+  "confidence": "winning vote fraction",
+  "abstain_threshold": 0.62,
+  "decision_rule": "argmax in N,C,W,B order; output U when winning vote fraction is strictly below abstain_threshold",
+  "abstain_policy": {
+    "rule": "evaluation_plan.md section 6 (D-096)",
+    "branch": "worst_group_gain",
+    "chosen_point": {
+      "threshold": 0.62,
+      "groups": {
+        "icbhi": {
+          "coverage": 0.7375690607734806,
+          "retained_accuracy": 0.4307116104868914,
+          "accuracy_t0": 0.4143646408839779
+        },
+        "hf_steth": {
+          "coverage": 0.8268330733229329,
+          "retained_accuracy": 0.5909433962264151,
+          "accuracy_t0": 0.5581903276131045
+        },
+        "hf_trunc": {
+          "coverage": 0.7794015309672929,
+          "retained_accuracy": 0.44494047619047616,
+          "accuracy_t0": 0.4210160055671538
+        }
+      },
+      "feasible": true,
+      "worst_gain": 0.016346969602913486,
+      "mean_retained": 0.48886516096792754
+    },
+    "best_worst_gain": null
+  },
+  "features": {
+    "version": 2,
+    "sample_rate": 4000,
+    "window_samples": 12000,
+    "n_fft": 256,
+    "hop_length": 64,
+    "n_mels": 40,
+    "mel_bank": "features._mel_bank (HTK 0-2000 Hz, unit area)",
+    "stft": "torch center zeros hann",
+    "padding": "loop_repeat_own_audio",
+    "log_floor": "relative_1e-8_of_window_peak_plus_1e-30",
+    "normalization": "per_window_mean_std_floor_1e-6"
+  },
+  "augmentation": {
+    "version": 1,
+    "eq_probability": 0.6,
+    "eq_points_hz": [
+      0,
+      250,
+      500,
+      1000,
+      2000
+    ],
+    "eq_db": 8.0,
+    "clip_probability": 0.1,
+    "clip_peak": [
+      1.0,
+      2.0
+    ],
+    "noise_probability": 0.6,
+    "noise_colours": {
+      "white": 0.0,
+      "pink": 1.0,
+      "brown": 2.0
+    },
+    "snr_db": [
+      3.0,
+      30.0
+    ],
+    "start_jitter_s": 0.5
+  },
+  "architecture": {
+    "channels": [
+      16,
+      32,
+      64,
+      128
+    ],
+    "kernel_size": 3,
+    "dropout": 0.25
+  },
+  "training": {
+    "arm": "C",
+    "arm_config": {
+      "balance_alpha": 0.5,
+      "augment": true,
+      "wheeze_factor": 1.5
+    },
+    "train_config": {
+      "version": 1,
+      "batch_size": 32,
+      "learning_rate": 0.001,
+      "epoch_windows": 32000,
+      "max_epochs": 15,
+      "patience": 3,
+      "min_delta": 0.0001,
+      "monitor": "inner_source_macro_f1_vote",
+      "seed": 42,
+      "threads": 4
+    },
+    "final_epochs": 6,
+    "population": "adult-only ICBHI train + HF_Lung train (v1 pool, D-042)",
+    "records": 7878,
+    "patients": 178,
+    "seed": 42
+  },
+  "train_oof_selection": {
+    "source_macro_f1": {
+      "per_group": {
+        "icbhi": 0.3920068366213282,
+        "hf_steth": 0.44903984859478047,
+        "hf_trunc": 0.3288963933775194
+      },
+      "source_macro": 0.389981026197876
+    },
+    "pooled_macro_f1": 0.398330985055664,
+    "noise20_agreement_t0": 0.806930693069307,
+    "v1_reference": {
+      "per_group": {
+        "icbhi": 0.3095283691521205,
+        "hf_steth": 0.47680751520757275,
+        "hf_trunc": 0.3476166912821977
+      },
+      "source_macro": 0.3779841918806303
+    }
+  },
+  "provenance": {
+    "plan": "reports/model_v2/evaluation_plan.md",
+    "selection": "reports/model_v2/selection.json",
+    "selection_sha256": "02bbf2633ea6de671512a4651fc396ef61d48142931a91691288685074683156",
+    "oof": "data/processed/model_v2/oof_C.csv",
+    "oof_sha256": "e5339a08c830e0af8512a91580391e76784fde2534292c97fae8b030aa35437d",
+    "manifest_sha256": "7b120474bcc9ad099d6997db4f78f56b10c9ab0296347566a6656cf738be7650"
+  },
+  "validation_status": "train-only grouped out-of-fold selection evidence; no fresh human external test; Hanhong/device and clinical evaluation not run"
+}

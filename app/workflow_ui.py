@@ -21,12 +21,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / 'src') not in sys.path:
     sys.path.insert(0, str(ROOT / 'src'))
 
-from stethoai.app_core import LABELS, MANUAL_LABELS, Store, check_audio, decodable, load_frozen
+from stethoai.app_core import LABELS, MANUAL_LABELS, Store, check_audio, decodable, load_model
 from stethoai.drive_store import DriveClient, DriveError, DriveState, DriveStore
 
 PRODUCT = 'Lung Sound Record'
-NOTICE = ('This tool is a research prototype built for a student study. It is not an approved medical device, and its '
-          'analysis describes lung sounds without making a diagnosis.')
+NOTICE = 'This research prototype is not a medical device and does not diagnose.'
 SITE_NAMES = {'ARU': 'Right upper', 'ARL': 'Right lower', 'ALU': 'Left upper', 'ALL': 'Left lower',
               'PRU': 'Right upper', 'PRL': 'Right lower', 'PLU': 'Left upper', 'PLL': 'Left lower'}
 # Same order as section 4 item 7 of the student recording guide.
@@ -36,8 +35,7 @@ SITE_ORDER = tuple(code for _, codes in SITE_GROUPS for code in codes)
 MODE_NAMES = {'BELL': 'Bell', 'DIA': 'Diaphragm'}
 # Diaphragm is listed first and chosen by default: the protocol records in lung (diaphragm) mode (D-097).
 MODE_ORDER = ('DIA', 'BELL')
-MODE_HELP = {'DIA': 'Transmits higher-pitched sounds, which include most breath sounds, crackles and wheezes.',
-             'BELL': 'Transmits low-pitched sounds and is not used for the lung recordings in this study.'}
+MODE_HELP = {'DIA': 'Used for lung sounds in this study.', 'BELL': 'Not used for lung sounds in this study.'}
 DRAFT_STATUS = 'Attached, not saved yet'
 # Public project website (D-087, D-088); the tool links back to it from sign-in and every footer.
 WEBSITE_URL = 'https://lung-sound-study.pages.dev'
@@ -52,7 +50,7 @@ FINDING_STYLE = {
     'C': ('crackle', 'Crackle-like sound', 'Listen again at the marked times before you sign.'),
     'W': ('wheeze', 'Wheeze-like sound', 'Listen again at the marked times before you sign.'),
     'B': ('both', 'Crackle-like and wheeze-like sound', 'Listen again at the marked times before you sign.'),
-    'U': ('uncertain', 'No clear pattern', 'No pattern covered enough of the recording to be named. Rely on what you heard.'),
+    'U': ('uncertain', 'No clear pattern', 'No pattern was strong enough to name. Rely on what you heard.'),
     'Q': ('qcfail', 'Recording not usable', 'The analysis did not run on this recording.'),
 }
 
@@ -89,7 +87,9 @@ p,li,label{font-size:1rem;line-height:1.5;}
 .st-key-masthead [data-testid="stMarkdownContainer"] p.brand{margin-bottom:0;}
 .st-key-masthead [data-testid="stMarkdown"],.st-key-masthead [data-testid="stMarkdownContainer"]{margin-bottom:0!important;height:auto!important;}
 .st-key-masthead [data-testid="stElementContainer"]:has(.brand){height:auto!important;min-height:1.5rem;}
-.st-key-nav{gap:.1rem!important;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;}
+.st-key-nav{gap:0!important;flex-wrap:nowrap;overflow:visible;}
+/* All four links fit at 390 px; a hidden sideways scroll had cut off "About" (D-112). */
+@media (max-width:899px){div.st-key-nav.stHorizontalBlock{width:100%!important;justify-content:space-between;gap:0!important;column-gap:0!important;}.st-key-nav [data-testid="stElementContainer"]{flex:0 0 auto;width:auto!important;min-width:max-content;}.st-key-nav [data-testid="stPageLink"] a span{overflow:visible;text-overflow:clip;}.st-key-nav [data-testid="stPageLink"] a{padding:.25rem .35rem;justify-content:center;}.st-key-nav [data-testid="stPageLink"] a p{font-size:.875rem;}}
 .st-key-nav [data-testid="stPageLink"] a{min-height:44px;padding:.25rem .65rem;border-radius:var(--radius);white-space:nowrap;}
 .st-key-nav [data-testid="stPageLink"] a p{font-size:.92rem;font-weight:550;color:var(--muted);}
 .st-key-nav [data-testid="stPageLink"] a:hover{background:var(--hover);}
@@ -117,6 +117,13 @@ input[type="text"],input[type="password"],input[type="number"],[data-baseweb="se
 [data-testid="stNumberInputStepDown"],[data-testid="stNumberInputStepUp"]{min-width:44px!important;min-height:44px!important;}
 [data-testid="stNumberInputContainer"]{min-height:46px;}
 :focus-visible,button:focus-visible,a:focus-visible,label:has(:focus-visible){outline:3px solid var(--focus)!important;outline-offset:1px;}
+/* Text fields: the ring goes round the whole field. On the inner input it was clipped to an orange sliver (D-112). */
+:is([data-testid="stTextInputRootElement"],[data-testid="stNumberInputContainer"],[data-testid="stTextAreaRootElement"],[data-baseweb="input"],[data-baseweb="textarea"],[data-baseweb="select"]>div) :is(input,textarea):focus-visible{outline:none!important;}
+:is([data-testid="stTextInputRootElement"],[data-testid="stNumberInputContainer"],[data-testid="stTextAreaRootElement"],[data-baseweb="input"],[data-baseweb="textarea"],[data-baseweb="select"]>div):focus-within{outline:3px solid var(--focus)!important;outline-offset:-3px;}
+:is([data-testid="stTextInputRootElement"],[data-testid="stNumberInputContainer"],[data-testid="stTextAreaRootElement"],[data-baseweb="input"],[data-baseweb="textarea"],[data-baseweb="select"]>div) button:focus-visible{outline-offset:-3px;}
+/* Scrolling regions Chrome makes focusable: the ring is drawn inside so the window edge cannot cut it. */
+[data-testid="stAppViewContainer"] :is([data-testid="stMain"],[data-testid="stMainBlockContainer"],section):focus-visible{outline-offset:-3px;}
+.st-key-nav [data-testid="stPageLink"] a:focus-visible{outline-offset:-3px;}
 [data-testid="stHeaderActionElements"]{display:none!important;}
 [data-testid="stElementContainer"]:has([data-testid="stRadio"]),[data-testid="stRadio"],[data-testid="stRadio"]>div,[data-testid="stRadio"] [role="radiogroup"]{width:100%!important;}
 [data-testid="stRadio"] [role="radiogroup"]>label,[data-testid="stRadio"] [role="radiogroup"]>div{width:100%!important;max-width:none!important;}
@@ -155,9 +162,14 @@ input[type="text"],input[type="password"],input[type="number"],[data-baseweb="se
 [class*="st-key-pick_"] button::after{content:"";position:absolute;}
 [class*="st-key-pick_"] button[kind="primary"]::before{box-shadow:0 0 0 3px #fff,0 0 0 6px var(--action);}
 [data-testid="stFileUploaderDropzoneInstructions"],[data-testid="stFileUploaderDropzone"] button svg,[data-testid="stFileUploaderDropzone"] button [data-testid="stIconMaterial"],[data-testid="stFileUploaderDropzone"] button span:has(>svg),[data-testid="stFileUploaderDropzone"] button span:has(>[data-testid="stIconMaterial"]){display:none!important;}
-.st-key-view_switch{gap:0!important;flex-wrap:nowrap;margin-bottom:.15rem;}
-.st-key-view_switch .stButton{flex:1 1 0;} .st-key-view_switch [data-testid="stElementContainer"]{flex:1 1 0;width:auto!important;}
-.st-key-view_front button{border-radius:var(--radius) 0 0 var(--radius);} .st-key-view_back button{border-radius:0 var(--radius) var(--radius) 0;border-left:0;}
+/* Segmented pairs (Front/Back, Trial 1/Trial 2): one joined control, shared edge, outer corners rounded (D-112). */
+div.stHorizontalBlock.st-key-view_switch,div.stHorizontalBlock.st-key-trial_switch{gap:0!important;column-gap:0!important;flex-wrap:nowrap;margin-bottom:.15rem;}
+.st-key-view_switch [data-testid="stElementContainer"],.st-key-trial_switch [data-testid="stElementContainer"]{flex:1 1 0;width:auto!important;min-width:0;}
+.st-key-view_switch .stButton,.st-key-trial_switch .stButton{width:100%;}
+.st-key-view_switch button,.st-key-trial_switch button{width:100%;min-height:48px;margin:0;}
+.st-key-view_front button,.st-key-trial_pick_1 button{border-radius:var(--radius) 0 0 var(--radius)!important;}
+.st-key-view_back button,.st-key-trial_pick_2 button{border-radius:0 var(--radius) var(--radius) 0!important;margin-left:-1px;}
+.st-key-trial_switch{max-width:22rem;} .seg-label{margin:0 0 .3rem;font-size:.875rem;color:var(--ink);}
 .legend{display:flex;flex-wrap:wrap;gap:.3rem 1rem;color:var(--muted);font-size:.92rem;}
 .legend span{display:inline-flex;align-items:center;gap:.4rem;}
 .mk{display:inline-grid;place-items:center;width:18px;height:18px;box-sizing:border-box;border-radius:50%;border:2px solid var(--ink);background:#fff;font-size:11px;font-weight:800;font-style:normal;line-height:1;}
@@ -183,7 +195,7 @@ input::placeholder{color:var(--muted)!important;opacity:1;}
 [class*="st-key-row_"] .stButton button[kind="primary"]{background:var(--selected);color:var(--action);font-weight:650;border-bottom-color:var(--action);}
 .st-key-work{background:var(--sheet);border:1px solid var(--rule);border-radius:var(--radius);padding:.9rem 1rem 1.1rem;}
 .work-site{margin:0;font-size:1.25rem;font-weight:650;line-height:1.25;}
-.st-key-trial_pick{max-width:14rem;}
+
 .st-key-examiner_line p.examiner{margin:0!important;font-size:1.15rem;font-weight:650;} .st-key-examiner_line{gap:1rem;flex-wrap:wrap;margin-bottom:.5rem;}
 .st-key-examiner_line .stButton{width:auto!important;} .st-key-examiner_line button{min-height:44px;width:auto;}
 .work-meta{margin:.1rem 0 .6rem;color:var(--muted);font-size:.92rem;}
@@ -198,11 +210,25 @@ input::placeholder{color:var(--muted)!important;opacity:1;}
 .timeline-key{display:flex;flex-wrap:wrap;gap:.2rem .9rem;margin:.25rem 0 .5rem;color:var(--muted);font-size:.85rem;}
 .timeline-key i{display:inline-block;width:12px;height:12px;margin-right:.3rem;vertical-align:-1px;}
 .st-key-listen_times{gap:.4rem;flex-wrap:wrap;} .st-key-listen_times .stButton{width:auto!important;} .st-key-listen_times button{min-height:44px;width:auto;font-variant-numeric:tabular-nums;}
+/* Analysis in progress (D-111): the model's real stages, drawn on the recording itself. */
+.trace{margin:.4rem 0 .6rem;}
+.trace .timeline .veil{position:absolute;top:0;bottom:0;right:0;background:var(--track);opacity:.62;transition:left .16s ease-out;}
+.trace .timeline .cursor{position:absolute;top:-1px;bottom:-1px;width:2px;background:var(--action);transition:left .16s ease-out;}
+.trace .timeline .cell{position:absolute;top:0;bottom:0;border-bottom:5px solid;box-sizing:border-box;animation:settle .2s ease-out both;}
+.trace ul.steps{list-style:none;margin:.6rem 0 0!important;padding:0!important;border-top:1px solid var(--rule);}
+.steps li{position:relative;margin:0!important;padding:.45rem 0 .5rem;border-bottom:1px solid var(--rule);color:var(--ink);font-size:.95rem;line-height:1.45;}
+.steps li.pending{color:var(--muted);}
+.steps li.active{font-weight:600;}
+.steps li.active::after{content:"";position:absolute;left:0;bottom:-1px;height:2px;width:30%;background:var(--action);animation:travel 1.3s cubic-bezier(.45,0,.55,1) infinite alternate;}
+.steps li.failed{color:var(--on-problem);font-weight:600;}
+.steps .count{display:block;color:var(--muted);font-weight:400;font-size:.88rem;font-variant-numeric:tabular-nums;}
+@keyframes travel{from{left:0;}to{left:70%;}}
 .problem{background:var(--q-bg);color:var(--on-problem);padding:.6rem .75rem;border-radius:var(--radius);margin:.3rem 0 .6rem;}
 .empty{padding:1rem 0;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);}
 .empty b{display:block;font-size:1.15rem;margin-bottom:.15rem;}
 .foot{margin:1.75rem 0 0;padding-top:.5rem;border-top:1px solid var(--rule);color:var(--muted);font-size:.85rem;}
 .prose{max-width:68ch;}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;margin:0;}
 @media (min-width:900px){h1{font-size:1.65rem!important;} .st-key-masthead{flex-direction:row;align-items:center;justify-content:space-between;}
   .st-key-masthead>div{width:auto!important;}}
 /* Motion (D-100): feedback and continuity only. */
@@ -225,11 +251,18 @@ LOGIN_CSS = '''<style>
 </style>'''
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
+def model_state():
+    """Survives page reruns and module reloads, so the trace says the model is loading only when it is."""
+    return {}
+
+
+@st.cache_resource(show_spinner=False)
 def get_model():
-    # load_frozen verifies bytes before torch.load. Never read a manifest here.
-    return load_frozen(model_path=ROOT / 'models/cnn_3s_vote_v1/model.pt',
-                       config_path=ROOT / 'models/cnn_3s_vote_v1/config.json')
+    # load_model verifies the frozen v2 bytes and config before torch.load (D-113, D-114). Never read a manifest here.
+    model = load_model()
+    model_state()['ready'] = True
+    return model
 
 
 def is_hosted():
@@ -293,28 +326,39 @@ def open_store():
     return Store(os.environ.get('STETHOAI_LOG_ROOT', ROOT / 'logs/app'))
 
 
-def setup(title):
-    """Page chrome shared by every screen."""
-    # A tap's busy mark belongs to this run only, so an interrupted save never fires again later.
-    st.session_state['busy_now'] = st.session_state.pop('busy', None)
+# One entry script draws the masthead and runs the chosen page (D-112). A folder of separate pages made Streamlit
+# clear the whole screen on every switch, which read as a blank flash; now the masthead stays and only the body changes.
+# The URL paths are the ones the separate pages had, so saved links and reload restore keep working.
+HOME = 'pages/0_Assessments.py'
+PAGES = ((HOME, 'Assessments', None), ('pages/1_Assessment.py', 'Assessment', 'Assessment'),
+         ('pages/2_Follow_up.py', 'Follow-up', 'Follow_up'), ('pages/3_Study_data.py', 'Study data', 'Study_data'),
+         ('pages/4_About_analysis.py', 'About the analysis', 'About_analysis'))
+
+
+def frame(title):
+    """Chrome shared by every screen, drawn once per run by the entry script before the page runs."""
     st.set_page_config(page_title=f'{title} | {PRODUCT}', page_icon=str(ROOT / 'app/lung_icon.png'),
                        layout='wide', initial_sidebar_state='collapsed')
     st.markdown(CSS, unsafe_allow_html=True)
     require_password()
-    store = open_store()
     with st.container(key='masthead'):
         st.markdown(f'<p class="brand">{PRODUCT}</p>', unsafe_allow_html=True)
         with st.container(key='nav', horizontal=True):
-            st.page_link('Home.py', label='Assessments')
-            st.page_link('pages/2_Follow_up.py', label='Follow-up')
-            st.page_link('pages/3_Study_data.py', label='Study data')
-            st.page_link('pages/4_About_analysis.py', label='About')
-    return store
+            for path, label in ((HOME, 'Assessments'), ('pages/2_Follow_up.py', 'Follow-up'),
+                                ('pages/3_Study_data.py', 'Study data'), ('pages/4_About_analysis.py', 'About')):
+                st.page_link(path, label=label)
+
+
+def setup(title):
+    """Per-page start: the busy mark for this run and the record store. The chrome is drawn by frame()."""
+    # A tap's busy mark belongs to this run only, so an interrupted save never fires again later.
+    st.session_state['busy_now'] = st.session_state.pop('busy', None)
+    require_password()  # Also here, so no page can run without sign-in even if started on its own.
+    return open_store()
 
 
 def footer():
-    st.markdown(f'<p class="foot">{NOTICE} Records are identified by study codes so that no names are stored. '
-                f'<a href="{WEBSITE_URL}">Return to the project website</a></p>',
+    st.markdown(f'<p class="foot">{NOTICE} <a href="{WEBSITE_URL}">Project website</a></p>',
                 unsafe_allow_html=True)
 
 
@@ -484,20 +528,28 @@ def marked_segments(windows):
     return merged
 
 
-def timeline(path, segments):
-    """Inline SVG of the sound envelope with marked times; includes a text alternative."""
+def envelope(path):
+    """Peak level in 96 equal slices of the recording, scaled to 0..1, and its length in seconds."""
     values, rate = sf.read(path, dtype='float32', always_2d=True)
     mono = values.mean(axis=1)
-    duration = len(mono) / rate
     bins = np.array_split(np.abs(mono), 96)
     levels = np.array([b.max() if b.size else 0 for b in bins])
-    levels = levels / max(float(levels.max()), 1e-6)
+    return levels / max(float(levels.max()), 1e-6), len(mono) / rate
+
+
+def envelope_bars(levels):
+    return ''.join(f'<span class="bar" style="height:{max(v * 82, 2):.0f}%"></span>' for v in levels)
+
+
+def timeline(path, segments):
+    """Inline SVG of the sound envelope with marked times; includes a text alternative."""
+    levels, duration = envelope(path)
     bands = ''.join(
         f'<span class="band" style="left:{s["start_s"] / duration:.2%};'
         f'width:{(min(s["end_s"], duration) - s["start_s"]) / duration:.2%};'
         f'background:{SEGMENT_FILL[s["code"]]}33;border-bottom-color:{SEGMENT_FILL[s["code"]]}"></span>'
         for s in segments)
-    bars = ''.join(f'<span class="bar" style="height:{max(v * 82, 2):.0f}%"></span>' for v in levels)
+    bars = envelope_bars(levels)
     if segments:
         spoken = ', '.join(f'{PATTERN_NAMES[s["code"]]} from {clock(s["start_s"])} to {clock(min(s["end_s"], duration))}'
                            for s in segments)
@@ -507,6 +559,128 @@ def timeline(path, segments):
                   for c in dict.fromkeys(s['code'] for s in segments))
     st.html(f'<div class="timeline" role="img" aria-label="Sound over {clock(duration)}: {escape(spoken)}">'
             f'{bands}{bars}</div><div class="timeline-key"><span>0:00 to {clock(duration)}</span>{key}</div>')
+
+
+SEGMENT_WORDS = {'N': 'showed no crackle or wheeze', 'C': ('was', 'were', 'crackle-like'), 'W': ('was', 'were', 'wheeze-like'),
+                 'B': ('was', 'were', 'crackle- and wheeze-like')}
+
+
+def segment_phrase(code, n):
+    words = SEGMENT_WORDS[code]
+    if isinstance(words, str):
+        return f'{n} {words}'
+    single, plural, kind = words
+    return f'{n} {single if n == 1 else plural} {kind}'
+SWEEP_SECONDS = 1.6  # D-111: the real segment outputs are drawn across at most this long, the same for every trial.
+
+
+class AnalysisTrace:
+    """Shows the analysis stages as they happen, on the recording's own sound envelope (D-111).
+
+    Every line reports what a stage actually produced. Only the drawing of the per-segment outputs
+    is paced, so that it can be followed; no stage is invented and no result is held back.
+    """
+
+    def __init__(self, path, place='the study record'):
+        self.place = place
+        try:
+            self.levels, self.duration = envelope(path)
+        except (OSError, RuntimeError, ValueError):  # An unreadable file still gets its quality-check line.
+            self.levels, self.duration = np.zeros(96), 1.
+        self.slot = st.empty()
+        self.steps = {}
+        self.cells, self.frontier = [], 0.
+        self.count = ''
+
+    def step(self, key, text, state):
+        self.steps[key] = (text, state)
+        self.draw()
+
+    def draw(self):
+        width = max(self.duration, 1e-6)
+        cells = ''.join(
+            f'<span class="cell" style="left:{c["start_s"] / width:.2%};width:{(c["end_s"] - c["start_s"]) / width:.2%};'
+            f'background:{SEGMENT_FILL[c["code"]]}26;border-bottom-color:{SEGMENT_FILL[c["code"]]}"></span>'
+            for c in self.cells if c['code'] != 'N')
+        edge = min(self.frontier / width, 1)
+        # The cursor marks the segment being drawn; it shows only while segment outputs are being drawn.
+        cursor = f'<span class="cursor" style="left:calc({edge:.2%} - 1px)"></span>' if 0 < edge < 1 else ''
+        lines = []
+        for key, (text, state) in self.steps.items():
+            extra = f'<span class="count" aria-hidden="true">{escape(self.count)}</span>' if key == 'segments' and self.count else ''
+            lines.append(f'<li class="{state}">{escape(text)}{extra}</li>')
+        current = next((t for t, s in reversed(self.steps.values()) if s in ('active', 'failed')), '')
+        self.slot.html(
+            f'<div class="trace">'
+            f'<div class="timeline" aria-hidden="true">{envelope_bars(self.levels)}{cells}'
+            f'<span class="veil" style="left:{edge:.2%}"></span>{cursor}</div>'
+            f'<ul class="steps">{"".join(lines)}</ul>'
+            f'<p class="sr-only" role="status">{escape(current)}</p></div>')
+
+    def load_model(self, loader, ready):
+        if not ready:
+            self.step('model', 'The analysis model is loading, which takes a few seconds once.', 'active')
+        model = loader()
+        if not ready:
+            self.step('model', 'The analysis model is loaded.', 'done')
+        self.step('quality', 'The recording is being checked for quality.', 'active')
+        return model
+
+    def update(self, stage, data):
+        if stage == 'quality':
+            if data['qc_status'] == 'pass':
+                self.step('quality', f"The recording passed the quality check ({data['duration_s']:.1f} seconds).", 'done')
+            else:
+                self.step('quality', f"The recording did not pass the quality check. {qc_words(data['qc_reason'])}.", 'failed')
+        elif stage == 'prepared':
+            self.step('segments', f"The model is examining {data['segments']} overlapping 3‑second segments.", 'active')
+        elif stage == 'analyzed' and data['finding'] != 'Q':
+            self.sweep(data['window_outputs'])
+            self.close_segments(data)
+        elif stage == 'stored':
+            self.step('quality', 'The saved analysis was loaded and was not run again.', 'done')
+            if data['finding'] != 'Q':
+                self.cells = [self.cell(w) for w in data['window_outputs']]
+                self.frontier = self.duration
+                self.close_segments(data)
+        elif stage == 'saving':
+            self.step('saving', f'The analysis is being saved to {self.place}.', 'active')
+
+    @staticmethod
+    def cell(window):
+        return dict(start_s=window['start_s'], end_s=window['end_s'],
+                    code='NCWB'[int(np.argmax(window['probabilities']))])
+
+    def sweep(self, windows):
+        pause = min(.18, SWEEP_SECONDS / max(len(windows), 1))
+        for i, window in enumerate(windows, 1):
+            self.cells.append(self.cell(window))
+            self.frontier = window['end_s']
+            self.count = f"{i} of {len(windows)} {'is' if i == 1 else 'are'} drawn."
+            self.draw()
+            time.sleep(pause)
+
+    def close_segments(self, result):
+        self.count = ''
+        windows = result['window_outputs']
+        tally = {code: sum(1 for w in windows if self.cell(w)['code'] == code) for code in 'NCWB'}
+        parts = [segment_phrase(code, n) for code, n in tally.items() if n]
+        self.step('segments', f"Of {len(windows)} segments, {', '.join(parts)}.", 'done')
+        top = result['top_score'] or 0
+        if result['finding'] == 'U':
+            words = f"No pattern reached the {result['threshold']:.0%} needed to be named; the largest was {top:.0%}."
+        else:
+            words = f"{top:.0%} of segments agreed; {result['threshold']:.0%} is needed to report a result."
+        self.step('vote', words, 'done')
+
+    def finish(self):
+        self.step('saving', f'The analysis was saved to {self.place}.', 'done')
+
+    def fail(self):
+        for key, (text, state) in list(self.steps.items()):
+            if state == 'active':
+                self.steps[key] = (text, 'failed')
+        self.draw()
 
 
 def analysis_panel(result, path, trial_id, signed=False):
@@ -538,13 +712,13 @@ def analysis_panel(result, path, trial_id, signed=False):
     with st.container(key=f'player_{nonce}'):  # A new key moves the player even on a repeat tap.
         st.audio(Path(path).read_bytes(), format='audio/wav', start_time=seconds)
     if code == 'U':
-        basis = (f"The strongest pattern covered {result['top_score']:.0%} of the 3-second segments. "
-                 f"It needs {result['threshold']:.0%} to name one.")
+        basis = (f"The strongest pattern covered {result['top_score']:.0%} of the segments; "
+                 f"{result['threshold']:.0%} is needed to name one.")
     else:
         count = round(result['top_score'] * len(windows))
         ending = 'showed no crackle or wheeze' if code == 'N' else 'showed this pattern'
-        basis = f'{count} of {len(windows)} overlapping 3-second segments {ending}.'
-    st.caption(f'{basis} The analysis describes the sound and does not make a diagnosis.')
+        basis = f'{count} of {len(windows)} segments {ending}.'
+    st.caption(basis)
 
 
 # Unsaved work and slow saves (D-098, D-099).
@@ -621,9 +795,12 @@ def save_draft(store, assessment, site, number, draft):
         raw.unlink(missing_ok=True)
 
 
+def record_place(store):
+    return 'the team folder' if isinstance(store, DriveStore) else 'the study record'
+
+
 def saving_words(store, what):
-    where = 'the team folder' if isinstance(store, DriveStore) else 'the study record'
-    return f'Saving {what} to {where}...'
+    return f'Saving {what} to {record_place(store)}...'
 
 
 def _mark_busy(key):

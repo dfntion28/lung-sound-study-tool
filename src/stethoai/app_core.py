@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+from types import MappingProxyType
 from uuid import uuid4
 
 import numpy as np
@@ -28,7 +29,8 @@ from scipy.signal import resample_poly
 import soundfile as sf
 
 from .audio_qc import inspect_audio
-from .locked_eval import FROZEN, load_frozen, output_label, vote, window_probabilities
+from .cnn_v2 import load_v2, predict_signal
+from .locked_eval import vote
 from .windowing import window_bounds
 
 
@@ -45,7 +47,11 @@ RATER_COLUMNS = ['trial_id', 'case_code', 'site_code', 'rater_code', 'manual_lab
                  'manual_locked_at', 'ai_prediction_id', 'ai_finding', 'assisted_label',
                  'assisted_at', 'expert_reference', 'protocol_deviation']
 SCHEMAS = {'predictions': PREDICTION_COLUMNS, 'rater_study': RATER_COLUMNS}
-PREPROCESS_VERSION = 'mono4000_logmel_3s_halfhop_vote_v1'
+# Adopted model (D-114): frozen v2 under D-113. Constants are checked against config.json at load time.
+MODEL = MappingProxyType(dict(
+    version='cnn_3s_vote_v2', directory=PROJECT_ROOT / 'models/cnn_3s_vote_v2',
+    sha256='943db6f8c1c9967f1434aba8e1b67fbe8f9b73d21ea627f341ad276cb9c07bc6', threshold=.62, window=3))
+PREPROCESS_VERSION = 'mono4000_logmel_looppad_peakfloor80_3s_halfhop_vote_v2'
 NOT_ENOUGH = 'not enough data'
 UNDEFINED = 'undefined (no label variation)'
 _LOCKS = defaultdict(threading.RLock)
@@ -120,11 +126,26 @@ def check_audio(path, *, protocol_path=PROTOCOL_PATH):
                 qc_status='fail' if reasons else 'pass', qc_reason=';'.join(reasons))
 
 
-def analyze(path, model):
-    """Return an acoustic finding with the frozen Phase 5 inference recipe."""
+def load_model(directory=None):
+    """Load the adopted frozen model; refuse any file or config that is not the D-113 freeze."""
+    model, config = load_v2(directory or MODEL['directory'])
+    found = (config['model_version'], config['model_sha256'], config['abstain_threshold'], config['window_s'])
+    if found != (MODEL['version'], MODEL['sha256'], MODEL['threshold'], MODEL['window']):
+        raise ValueError('Model config does not match the adopted frozen model')
+    return model
+
+
+def analyze(path, model, progress=None):
+    """Return an acoustic finding with the frozen v2 inference recipe (cnn_v2.predict_signal, D-113/D-114).
+
+    `progress(stage, data)` is told what each stage produced, for display only (D-111);
+    it never changes the computation.
+    """
+    report = progress or (lambda stage, data: None)
     result = dict(check_audio(path), window_outputs=[], finding='Q', top_score=None,
-                  threshold=FROZEN['threshold'], relisten=False,
+                  threshold=MODEL['threshold'], relisten=False,
                   **{f'v{i}': 0. for i in range(4)})
+    report('quality', dict(result))
     if result['qc_status'] != 'pass':
         return result
     channels, sr = sf.read(path, dtype='float32', always_2d=True)
@@ -133,10 +154,11 @@ def analyze(path, model):
         divisor = gcd(sr, 4000)
         signal = resample_poly(signal, 4000 // divisor, sr // divisor)
     signal = signal.astype(np.float32)
-    bounds = window_bounds(len(signal), FROZEN['window'])
-    probabilities = window_probabilities(model, signal, bounds)
-    fractions = vote(probabilities)
-    finding = output_label(fractions)
+    bounds = window_bounds(len(signal), MODEL['window'])
+    report('prepared', dict(rate=sr, duration_s=len(signal) / 4000, segments=len(bounds)))
+    prediction = predict_signal(model, signal, MODEL['threshold'])
+    assert prediction['bounds'] == bounds
+    probabilities, fractions, finding = prediction['window_probabilities'], prediction['vote'], prediction['label']
     result.update(window_outputs=[dict(start_s=start / 4000, end_s=end / 4000,
                                        probabilities=list(map(float, values)))
                                   for (start, end), values in zip(bounds, probabilities)],
@@ -202,7 +224,7 @@ class Store:
     """
 
     def __init__(self, root=PROJECT_ROOT / 'logs/app', *, protocol_path=PROTOCOL_PATH,
-                 model_version='cnn_3s_vote_v1', model_sha256=FROZEN['model_sha256']):
+                 model_version=MODEL['version'], model_sha256=MODEL['sha256']):
         self.root = Path(root).resolve()
         self.protocol = protocol(protocol_path)
         self.model_version, self.model_sha256 = model_version, model_sha256
@@ -413,11 +435,12 @@ class Store:
             raise ValueError('Audio hash mismatch')
         if result['finding'] not in LABELS or (result['qc_status'] != 'pass' and result['finding'] != 'Q'):
             raise ValueError('Invalid finding/QC combination')
-        if result['threshold'] != FROZEN['threshold']:
+        if result['threshold'] != MODEL['threshold']:
             raise ValueError('Frozen threshold mismatch')
         rid = self.stored_name(trial_id)  # The stored file, so each examiner's recording has its own analysis.
         rows = self.table('predictions')
-        same = [r for r in rows if r['recording_id'] == rid]
+        # A stored analysis keeps its own model tag (D-114); only the same model's row is reused.
+        same = [r for r in rows if r['recording_id'] == rid and r['model_version'] == self.model_version]
         if same:
             row = same[0]
             if row['finding'] != result['finding'] or row['audio_sha256'] != result['audio_sha256']:
@@ -436,8 +459,9 @@ class Store:
         return self._decode_prediction(row, trial_id)
 
     @_serialized
-    def analyze_trial(self, trial_id, model):
+    def analyze_trial(self, trial_id, model, progress=None):
         self._locked(trial_id)  # This guard precedes inference, cache access and display.
+        report = progress or (lambda stage, data: None)
         current = self.get_ai(trial_id)
         if current is not None:
             return current
@@ -445,8 +469,11 @@ class Store:
         same = [r for r in self.table('predictions') if r['recording_id'] == rid]
         if same:
             result = self._decode_prediction(same[0], trial_id)
+            report('stored', dict(result))
         else:
-            result = analyze(self.recording_path(trial_id), model)
+            result = analyze(self.recording_path(trial_id), model, progress)
+            report('analyzed', dict(result))
+        report('saving', None)
         return self.record_ai(trial_id, result)
 
     @_serialized
@@ -485,8 +512,13 @@ class Store:
 
     @_serialized
     def analytics(self):
-        all_rows = self.table('rater_study')
-        rows = [r for r in all_rows if r['ai_prediction_id']]
+        # AI-dependent numbers use only analyses made by this store's model version (D-117), so first-version
+        # and second-version answers are never pooled. Manual-against-expert accuracy uses every trial.
+        version = {r['prediction_id']: r['model_version'] for r in self.table('predictions')}
+        every_row = self.table('rater_study')
+        current = [r for r in every_row if not r['ai_prediction_id'] or version.get(r['ai_prediction_id']) == self.model_version]
+        all_rows = current
+        rows = [r for r in current if r['ai_prediction_id']]
         # Manual Unsure and AI Uncertain are different judgments, even though the
         # stored code U is shared. Keep them distinct in agreement and kappa.
         manual = ['manual_unsure' if r['manual_label'] == 'U' else r['manual_label'] for r in rows]
@@ -494,7 +526,8 @@ class Store:
         metrics = dict(n_manual_ai=len(rows), agreement_pct=_percent(manual, ai),
                        cohen_kappa_manual_ai=cohen_kappa(manual, ai))
         for field, name in [('ai_finding', 'ai'), ('manual_label', 'manual'), ('assisted_label', 'assisted')]:
-            eligible = [r for r in all_rows if r['expert_reference'] and r[field]]
+            pool = every_row if name == 'manual' else all_rows
+            eligible = [r for r in pool if r['expert_reference'] and r[field]]
             left = [f'{name}_unsure' if name != 'ai' and r[field] == 'U' else r[field] for r in eligible]
             right = [r['expert_reference'] for r in eligible]
             metrics[f'n_{name}_expert'] = len(eligible)
@@ -507,6 +540,8 @@ class Store:
                                                (r['assisted_label'] != r['expert_reference'] or r['assisted_label'] == 'U')
                                                for r in complete) if len(complete) >= 2 else NOT_ENOUGH)
         metrics['repeatability'] = self._repeatability(rows)
+        metrics['model_version'] = self.model_version
+        metrics['n_other_model_excluded'] = len(every_row) - len(current)
         return metrics
 
     def _repeatability(self, rows):

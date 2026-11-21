@@ -10,9 +10,7 @@ from workflow_ui import LABELS, MODE_NAMES, SITE_NAMES, footer, parse_trial, set
 
 store = setup('Study data')
 st.title('Study data')
-st.markdown('<p class="prose">This page summarises the records saved in this tool for the research team. These results '
-            'are kept separate from the model\'s benchmark results. Agreement between the examiner and the analysis does not '
-            'show accuracy until an expert reference is entered.</p>', unsafe_allow_html=True)
+st.markdown('<p class="prose">These results come from this tool\'s recordings, not from the model benchmark.</p>', unsafe_allow_html=True)
 metrics = store.analytics()
 
 
@@ -28,24 +26,27 @@ def entries(pairs):
 st.subheader('Examiner and analysis agreement')
 entries((('Paired recordings', metrics['n_manual_ai']), ('Agreement (%)', fmt(metrics['agreement_pct'], 1)),
          ('Cohen’s κ', fmt(metrics['cohen_kappa_manual_ai']))))
+st.caption('Agreement does not show accuracy; accuracy needs the expert reference.')
 st.subheader('Against the expert reference')
 entries([(f"{title} (n = {metrics[f'n_{name}_expert']})", fmt(metrics[f'accuracy_{name}_expert_pct'], 1))
          for name, title in (('manual', 'Examiner, first entry'), ('ai', 'Acoustic analysis'),
                              ('assisted', 'Examiner, final signed'))])
-st.caption('Each value is the percentage of recordings on which the finding matched the expert reference.')
-st.write(f"Final finding against expert, Cohen’s κ: {fmt(metrics['cohen_kappa_assisted_expert'])}")
-st.write(f"Correct first entries changed to incorrect: {metrics['right_to_wrong_count']}")
-st.caption('Each measure needs at least two eligible recordings. Cohen’s κ, an agreement score corrected for chance, '
-           'is undefined when every finding is the same. "Unable to determine" and "No clear pattern" are counted '
-           'as disagreement.')
+st.caption('Each value is the percentage of recordings that matched the expert reference.')
+entries((('Final finding against expert, Cohen’s κ', fmt(metrics['cohen_kappa_assisted_expert'])),
+         ('Correct first findings later changed', metrics['right_to_wrong_count'])))
 st.subheader('Analysis repeatability')
 repeat = metrics['repeatability']
-st.write(f"Repeated case and site groups: {repeat['n_groups']}. Distinct recordings: {repeat['n_recordings']}")
-st.write(f"Self-agreement (%): {fmt(repeat['self_agreement_pct'], 1)}. Fleiss κ: {fmt(repeat['fleiss_kappa'])}")
-st.caption('Self-agreement is the percentage of pairs of recordings from the same examiner, case and site on which the '
-           'analysis gave the same result. Fleiss’ κ corrects this agreement for chance and needs at least two repeated '
-           'case and site groups. These results describe the recordings saved in this tool; they do not validate the '
-           'analysis on the Hanhong stethoscope.')
+entries((('Repeated case and site groups', repeat['n_groups']), ('Distinct recordings', repeat['n_recordings']),
+         ('Self-agreement (%)', fmt(repeat['self_agreement_pct'], 1)), ('Fleiss’ κ', fmt(repeat['fleiss_kappa']))))
+with st.expander('How these measures are calculated'):
+    st.markdown('- Cohen’s κ is agreement corrected for chance. It is undefined when every finding is the same.\n'
+                '- Each measure needs at least two eligible recordings.\n'
+                '- "Unable to determine" and "No clear pattern" are counted as disagreement.\n'
+                '- Self-agreement is the percentage of recording pairs from the same examiner, case and site on which '
+                'the analysis gave the same result.\n'
+                '- Fleiss’ κ corrects self-agreement for chance and needs at least two repeated case and site groups.\n'
+                '- These results describe recordings saved in this tool. They do not validate the analysis on the '
+                'Hanhong stethoscope.')
 st.subheader('Expert reference')
 rows = store.table('rater_study')
 if rows:

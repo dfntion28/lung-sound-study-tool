@@ -10,14 +10,14 @@ SITES = {
     'PLL': (124, 282, 0, 44, 'middle'), 'PRL': (276, 282, 0, 44, 'middle'),
 }
 PLACEMENT = {
-    'ARU': '2nd intercostal space, right midclavicular line. From the middle of the collarbone, move about three finger-widths down.',
-    'ALU': '2nd intercostal space, left midclavicular line. From the middle of the collarbone, move about three finger-widths down.',
-    'ARL': '5th to 6th intercostal space, right anterior axillary line. Stay below the nipple line, in line with the front of the armpit.',
-    'ALL': '5th to 6th intercostal space, left anterior axillary line. Stay below the nipple line and to the outside of the heart.',
-    'PRU': 'Level of T3 to T4, between the spine and the inner edge of the right shoulder blade.',
-    'PLU': 'Level of T3 to T4, between the spine and the inner edge of the left shoulder blade.',
-    'PRL': 'Level of T8 to T9, about two finger-widths below the tip of the right shoulder blade.',
-    'PLL': 'Level of T8 to T9, about two finger-widths below the tip of the left shoulder blade.',
+    'ARU': 'Place it in the 2nd intercostal space, three finger-widths below the mid-collarbone.',
+    'ALU': 'Place it in the 2nd intercostal space, three finger-widths below the mid-collarbone.',
+    'ARL': 'Place it in line with the front of the armpit, 5th to 6th intercostal space.',
+    'ALL': 'Place it in line with the front of the armpit, 5th to 6th intercostal space, away from the heart.',
+    'PRU': 'Place it at T3 to T4, between the spine and the shoulder blade.',
+    'PLU': 'Place it at T3 to T4, between the spine and the shoulder blade.',
+    'PRL': 'Place it at T8 to T9, two finger-widths below the tip of the shoulder blade.',
+    'PLL': 'Place it at T8 to T9, two finger-widths below the tip of the shoulder blade.',
 }
 STATE = {'Not started': 'open', 'Needs finding': 'half', 'Ready to sign': 'half', 'Signed': 'done',
          'Record again': 'again', 'Attached, not saved yet': 'open'}  # Unsaved work keeps the marker; words say it.
