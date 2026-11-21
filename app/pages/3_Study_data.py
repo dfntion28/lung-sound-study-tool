@@ -1,3 +1,7 @@
+import fresh_modules
+
+fresh_modules.refresh()
+
 from html import escape
 
 import streamlit as st

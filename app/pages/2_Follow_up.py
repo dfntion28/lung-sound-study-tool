@@ -1,3 +1,7 @@
+import fresh_modules
+
+fresh_modules.refresh()
+
 import streamlit as st
 
 from workflow_ui import (MODE_NAMES, SITE_NAMES, empty_state, footer, is_replaced, open_assessment, parse_trial, setup,

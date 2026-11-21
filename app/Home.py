@@ -1,3 +1,7 @@
+import fresh_modules
+
+fresh_modules.refresh()
+
 from collections import defaultdict
 
 import streamlit as st

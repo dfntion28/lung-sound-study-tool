@@ -1,3 +1,7 @@
+import fresh_modules
+
+fresh_modules.refresh()
+
 import streamlit as st
 
 from workflow_ui import footer, setup
