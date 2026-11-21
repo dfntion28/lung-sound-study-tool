@@ -258,8 +258,48 @@ class Store:
         _code(rater)
         return rid
 
-    def recording_path(self, trial_id):
-        return self.root / 'recordings' / f'{self.recording_id(trial_id)}.wav'
+    def stored_name(self, trial_id, rows=None):
+        """File stem of a trial's recording. New files carry the examiner, so two examiners can record the
+        same case, site, trial and mode (D-109). A trial saved before that keeps its old name."""
+        rid = self.recording_id(trial_id)
+        folder = self.root / 'recordings'
+        if not (folder / f'{trial_id}.wav').exists() and (folder / f'{rid}.wav').exists():
+            rows = self.table('rater_study') if rows is None else rows
+            if any(r['trial_id'] == trial_id for r in rows):
+                return rid
+        return trial_id
+
+    def recording_path(self, trial_id, rows=None):
+        return self.root / 'recordings' / f'{self.stored_name(trial_id, rows)}.wav'
+
+    def _pushed(self, file_name):
+        """True when the durable copy already holds this recording. Local storage has none."""
+        return False
+
+    def _taken(self, stem):
+        return (self.root / 'recordings' / f'{stem}.wav').exists() or self._pushed(f'{stem}.wav')
+
+    def _landing(self, tid, raw, rows):
+        """Trial ID for a new record. A name left by a save whose record failed is reused when it holds the
+        same file or never reached durable storage; otherwise the next free retake number is used, because
+        durable storage never replaces a recording (D-109)."""
+        if not self._taken(tid):
+            return tid
+        left = self.root / 'recordings' / f'{tid}.wav'
+        if left.exists() and left.read_bytes() == raw:
+            return tid
+        if left.exists() and not self._pushed(left.name):
+            left.unlink()
+            return tid
+        case, site, attempt, mode = self.recording_id(tid).split('_')
+        rater = tid.partition('__')[2]
+        known = {r['trial_id'] for r in rows}
+        base = self.base_trial(int(attempt[1:]))
+        for number in range(base * 100 + 1, base * 100 + 100):
+            candidate = f'{case}_{site}_T{number:02d}_{mode}__{rater}'
+            if candidate not in known and not self._taken(candidate):
+                return candidate
+        raise ValueError('No free trial number for this site')
 
     @staticmethod
     def trial_number(trial_id):
@@ -277,9 +317,7 @@ class Store:
             raise ValueError('Site/mode must be in the provisional protocol')
         if isinstance(trial, bool) or not isinstance(trial, int) or trial < 1:
             raise ValueError('Trial number must be a positive integer')
-        rid = f'{case}_{site}_T{trial:02d}_{mode}'
-        tid = f'{rid}__{rater}'
-        destination = self.recording_path(tid)
+        tid = f'{case}_{site}_T{trial:02d}_{mode}__{rater}'
         source = Path(path)
         # Only decode valid audio; the UI reports unreadable files before here.
         values, sr = sf.read(source, dtype='float32', always_2d=True)
@@ -291,20 +329,39 @@ class Store:
             stream = io.BytesIO()
             sf.write(stream, values, sr, format='WAV', subtype='FLOAT')
             raw = stream.getvalue()
-        if destination.exists():
-            if destination.read_bytes() != raw:
-                raise ValueError('Recording exists; cannot overwrite. Use a new trial number.')
-        else:
-            # The app passes unique=True: one file must not stand for two sites or trials (fake repeatability).
-            for other in (sorted((self.root / 'recordings').glob(f'{case}_*.wav')) if unique else ()):
-                if other.read_bytes() == raw:
-                    raise ValueError(f'This file is already saved as {other.stem}. Attach the recording made here.')
-            destination.write_bytes(raw)
         rows = self.table('rater_study')
-        if not any(r['trial_id'] == tid for r in rows):
+        known = any(r['trial_id'] == tid for r in rows)
+        if not known:
+            tid = self._landing(tid, raw, rows)
+        destination = self.recording_path(tid, rows)
+        if destination.exists() and destination.read_bytes() != raw:
+            raise ValueError('Recording exists; cannot overwrite. Use a new trial number.')
+        if unique and not known:
+            # One file must not stand for two sites or trials (fake repeatability). The same file for the same
+            # site, trial and mode by another examiner is allowed: two examiners grading one recording.
+            here = (site, self.base_trial(self.trial_number(tid)), mode)
+            for other in rows:
+                info = self.recording_id(other['trial_id']).split('_')
+                same_place = (info[1], self.base_trial(int(info[2][1:])), info[3]) == here
+                if other['case_code'] != case or (same_place and other['rater_code'] != rater):
+                    continue
+                path = self.recording_path(other['trial_id'], rows)
+                if path.exists() and path.read_bytes() == raw:
+                    raise ValueError(f"This file is already saved as {self.recording_id(other['trial_id'])}. "
+                                     'Attach the recording made here.')
+        created = not destination.exists()
+        if created:
+            destination.write_bytes(raw)
+        if not known:
             row = dict.fromkeys(RATER_COLUMNS, '')
             row.update(trial_id=tid, case_code=case, site_code=site, rater_code=rater)
-            self._write('rater_study', [*rows, row])
+            try:
+                self._write('rater_study', [*rows, row])
+            except BaseException:
+                # Leave no recording without a record, unless it already reached durable storage.
+                if created and not self._pushed(destination.name):
+                    destination.unlink(missing_ok=True)
+                raise
         return tid
 
     @_serialized
@@ -358,7 +415,7 @@ class Store:
             raise ValueError('Invalid finding/QC combination')
         if result['threshold'] != FROZEN['threshold']:
             raise ValueError('Frozen threshold mismatch')
-        rid = self.recording_id(trial_id)
+        rid = self.stored_name(trial_id)  # The stored file, so each examiner's recording has its own analysis.
         rows = self.table('predictions')
         same = [r for r in rows if r['recording_id'] == rid]
         if same:
@@ -384,7 +441,7 @@ class Store:
         current = self.get_ai(trial_id)
         if current is not None:
             return current
-        rid = self.recording_id(trial_id)
+        rid = self.stored_name(trial_id)
         same = [r for r in self.table('predictions') if r['recording_id'] == rid]
         if same:
             result = self._decode_prediction(same[0], trial_id)
@@ -417,12 +474,12 @@ class Store:
                 (r['manual_label'] != r['ai_finding'] or r['manual_label'] == 'U' or r['ai_finding'] == 'U')]
 
     @_serialized
-    def previous_recording(self, case, site, before_trial):
+    def previous_recording(self, case, site, before_trial, rater=None):
         case, site = _code(case), _code(site)
         candidates = []
         for path in (self.root / 'recordings').glob(f'{case}_{site}_T*_*.wav'):
-            match = re.fullmatch(rf'{case}_{site}_T(\d+)_(BELL|DIA)\.wav', path.name)
-            if match and int(match[1]) < before_trial:
+            match = re.fullmatch(rf'{case}_{site}_T(\d+)_(BELL|DIA)(?:__([A-Z][A-Z0-9]{{0,15}}))?\.wav', path.name)
+            if match and int(match[1]) < before_trial and (rater is None or match[3] in (None, rater)):
                 candidates.append((int(match[1]), path.name, path))
         return max(candidates)[2] if candidates else None
 
@@ -458,19 +515,20 @@ class Store:
         for row in rows:
             case, site, attempt, mode = self.recording_id(row['trial_id']).split('_')
             number = int(attempt[1:])
-            key = (case, site, mode, self.base_trial(number))
+            key = (case, site, mode, self.base_trial(number), row['rater_code'])
             latest[key] = max(latest.get(key, 0), number)
         for row in rows:
             rid = self.recording_id(row['trial_id'])
             case, site, attempt, mode = rid.split('_')
             number = int(attempt[1:])
-            if number != latest[(case, site, mode, self.base_trial(number))]:
+            if number != latest[(case, site, mode, self.base_trial(number), row['rater_code'])]:
                 continue
-            groups[(row['case_code'], row['site_code'])][rid] = row['ai_finding']
+            # Repeats are one examiner's recordings of one site; other examiners' files are not repeats.
+            groups[(row['case_code'], row['site_code'], row['rater_code'])][rid] = row['ai_finding']
         repeats = [list(g.values()) for g in groups.values() if len(g) >= 2]
         output = dict(n_groups=len(repeats), n_recordings=sum(map(len, repeats)),
                       self_agreement_pct=NOT_ENOUGH, fleiss_kappa=NOT_ENOUGH,
-                      method='Self-agreement pools all within-case/site recording pairs. '
+                      method='Self-agreement pools all within-case/site recording pairs of one examiner. '
                              'Fleiss kappa averages within-group agreement with pooled label marginals; '
                              'unequal repeat counts use this descriptive extension. At least two groups '
                              'are needed for kappa. N/C/W/B/U/Q are separate AI categories.')

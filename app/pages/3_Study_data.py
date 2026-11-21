@@ -10,8 +10,9 @@ from workflow_ui import LABELS, MODE_NAMES, SITE_NAMES, footer, parse_trial, set
 
 store = setup('Study data')
 st.title('Study data')
-st.markdown('<p class="prose">For the research team. These local results are separate from the model benchmarks. '
-            'Agreement is not evidence of accuracy without an expert reference.</p>', unsafe_allow_html=True)
+st.markdown('<p class="prose">This page summarises the records saved in this tool for the research team. These results '
+            'are kept separate from the model\'s benchmark results. Agreement between the examiner and the analysis does not '
+            'show accuracy until an expert reference is entered.</p>', unsafe_allow_html=True)
 metrics = store.analytics()
 
 
@@ -31,16 +32,18 @@ st.subheader('Against the expert reference')
 entries([(f"{title} (n = {metrics[f'n_{name}_expert']})", fmt(metrics[f'accuracy_{name}_expert_pct'], 1))
          for name, title in (('manual', 'Examiner, first entry'), ('ai', 'Acoustic analysis'),
                              ('assisted', 'Examiner, final signed'))])
-st.caption('Values are accuracy percentages.')
+st.caption('Each value is the percentage of recordings on which the finding matched the expert reference.')
 st.write(f"Final finding against expert, Cohen’s κ: {fmt(metrics['cohen_kappa_assisted_expert'])}")
 st.write(f"Correct first entries changed to incorrect: {metrics['right_to_wrong_count']}")
-st.caption('Metrics need at least two eligible observations. κ is undefined when there is no label variation. '
-           'Unable to determine and no clear pattern count as disagreement.')
+st.caption('Each measure needs at least two eligible recordings. Cohen’s κ, an agreement score corrected for chance, '
+           'is undefined when every finding is the same. "Unable to determine" and "No clear pattern" are counted '
+           'as disagreement.')
 st.subheader('Analysis repeatability')
 repeat = metrics['repeatability']
 st.write(f"Repeated case and site groups: {repeat['n_groups']}. Distinct recordings: {repeat['n_recordings']}")
 st.write(f"Self-agreement (%): {fmt(repeat['self_agreement_pct'], 1)}. Fleiss κ: {fmt(repeat['fleiss_kappa'])}")
-st.caption(repeat['method'] + ' These are descriptive local results, not Hanhong validation.')
+st.caption(repeat['method'] + ' These results describe the recordings saved in this tool; they do not validate the '
+           'analysis on the Hanhong stethoscope.')
 st.subheader('Expert reference')
 rows = store.table('rater_study')
 if rows:

@@ -25,18 +25,19 @@ from stethoai.app_core import LABELS, MANUAL_LABELS, Store, check_audio, decodab
 from stethoai.drive_store import DriveClient, DriveError, DriveState, DriveStore
 
 PRODUCT = 'Lung Sound Record'
-NOTICE = 'Research prototype. Not a medical device. It does not diagnose.'
+NOTICE = ('This tool is a research prototype built for a student study. It is not an approved medical device, and its '
+          'analysis describes lung sounds without making a diagnosis.')
 SITE_NAMES = {'ARU': 'Right upper', 'ARL': 'Right lower', 'ALU': 'Left upper', 'ALL': 'Left lower',
               'PRU': 'Right upper', 'PRL': 'Right lower', 'PLU': 'Left upper', 'PLL': 'Left lower'}
-# Same order as Section 2 of the student recording guide.
+# Same order as section 4 item 7 of the student recording guide.
 SITE_GROUPS = (('Anterior chest', ('ARU', 'ALU', 'ARL', 'ALL')),
                ('Posterior chest', ('PRU', 'PLU', 'PRL', 'PLL')))
 SITE_ORDER = tuple(code for _, codes in SITE_GROUPS for code in codes)
 MODE_NAMES = {'BELL': 'Bell', 'DIA': 'Diaphragm'}
 # Diaphragm is listed first and chosen by default: the protocol records in lung (diaphragm) mode (D-097).
 MODE_ORDER = ('DIA', 'BELL')
-MODE_HELP = {'DIA': 'For higher-pitched sounds, such as most breath sounds, crackles and wheezes.',
-             'BELL': 'For low-pitched sounds.'}
+MODE_HELP = {'DIA': 'Transmits higher-pitched sounds, which include most breath sounds, crackles and wheezes.',
+             'BELL': 'Transmits low-pitched sounds and is not used for the lung recordings in this study.'}
 DRAFT_STATUS = 'Attached, not saved yet'
 # Public project website (D-087, D-088); the tool links back to it from sign-in and every footer.
 WEBSITE_URL = 'https://lung-sound-study.pages.dev'
@@ -51,7 +52,7 @@ FINDING_STYLE = {
     'C': ('crackle', 'Crackle-like sound', 'Listen again at the marked times before you sign.'),
     'W': ('wheeze', 'Wheeze-like sound', 'Listen again at the marked times before you sign.'),
     'B': ('both', 'Crackle-like and wheeze-like sound', 'Listen again at the marked times before you sign.'),
-    'U': ('uncertain', 'No clear pattern', 'The analysis could not settle on a pattern. Go by what you heard.'),
+    'U': ('uncertain', 'No clear pattern', 'No pattern covered enough of the recording to be named. Rely on what you heard.'),
     'Q': ('qcfail', 'Recording not usable', 'The analysis did not run on this recording.'),
 }
 
@@ -182,6 +183,9 @@ input::placeholder{color:var(--muted)!important;opacity:1;}
 [class*="st-key-row_"] .stButton button[kind="primary"]{background:var(--selected);color:var(--action);font-weight:650;border-bottom-color:var(--action);}
 .st-key-work{background:var(--sheet);border:1px solid var(--rule);border-radius:var(--radius);padding:.9rem 1rem 1.1rem;}
 .work-site{margin:0;font-size:1.25rem;font-weight:650;line-height:1.25;}
+.st-key-trial_pick{max-width:14rem;}
+.st-key-examiner_line p.examiner{margin:0!important;font-size:1.15rem;font-weight:650;} .st-key-examiner_line{gap:1rem;flex-wrap:wrap;margin-bottom:.5rem;}
+.st-key-examiner_line .stButton{width:auto!important;} .st-key-examiner_line button{min-height:44px;width:auto;}
 .work-meta{margin:.1rem 0 .6rem;color:var(--muted);font-size:.92rem;}
 .entry{margin:0;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.15rem 1rem;padding:.5rem 0;border-bottom:1px solid var(--rule);}
 .entry dt{color:var(--muted);font-size:.92rem;margin:0;} .entry dd{margin:0;font-weight:600;text-align:right;}
@@ -309,7 +313,8 @@ def setup(title):
 
 
 def footer():
-    st.markdown(f'<p class="foot">{NOTICE} Use study codes only, never names. <a href="{WEBSITE_URL}">Project website</a></p>',
+    st.markdown(f'<p class="foot">{NOTICE} Records are identified by study codes so that no names are stored. '
+                f'<a href="{WEBSITE_URL}">Return to the project website</a></p>',
                 unsafe_allow_html=True)
 
 
@@ -376,11 +381,77 @@ def is_complete(row):
     return bool(row) and bool(row['assisted_label'])  # An unusable recording still needs a retake.
 
 
+# Blinding for rater agreement (D-106): a session works under one examiner code and sees only that code's records.
+def session_examiner():
+    return st.session_state.get('examiner')
+
+
+def own_rows(store):
+    """Records saved under the examiner code of this session; none before a code is entered."""
+    code = session_examiner()
+    return [r for r in store.table('rater_study') if code and parse_trial(r['trial_id'])['examiner'] == code]
+
+
+# Trial order (D-107): at each site trial 1, then trial 2 after lifting and replacing the chestpiece (guide section 4).
+TRIALS = 2
+
+
+def trial_count(store, assessment):
+    """Two trials per site, or more where an older record used a higher trial number."""
+    infos = (parse_trial(r['trial_id']) for r in store.table('rater_study'))
+    return max([TRIALS, *(i['round'] for i in infos if all(i[k] == assessment[k] for k in ('case', 'examiner', 'mode')))])
+
+
+def walk(store, assessment):
+    """Every site and trial in recording order: site by site, trial 1 then trial 2."""
+    return [(site, n) for site in SITE_ORDER for n in range(1, trial_count(store, assessment) + 1)]
+
+
+def signed_pairs(store, assessment):
+    return {(site, n) for site, n in walk(store, assessment)
+            if is_complete(site_rows(store, {**assessment, 'round': n}).get(site))}
+
+
+def next_step(store, assessment, after=None):
+    """The first site and trial not signed, starting after the given pair and wrapping round."""
+    steps, done = walk(store, assessment), signed_pairs(store, assessment)
+    start = steps.index(after) + 1 if after in steps else 0
+    return next((step for step in steps[start:] + steps[:start] if step not in done), None)
+
+
 def open_assessment(case, examiner, round_number, mode, site=None):
-    st.session_state['assessment'] = dict(case=case, examiner=examiner, round=round_number, mode=mode)
+    assessment = dict(case=case, examiner=examiner, round=round_number, mode=mode)
+    st.session_state['assessment'] = assessment
     st.session_state['site'] = site
     st.session_state.pop('chart_view', None)
-    st.switch_page('pages/1_Assessment.py')
+    st.switch_page('pages/1_Assessment.py', query_params=url_state(assessment, site))
+
+
+# A reload or a phone app switch starts a new Streamlit session; the open case and site live in the URL
+# so the examiner returns to the same place after sign-in (D-108). Study codes only, never names.
+def url_state(assessment, site=None):
+    state = {'case': assessment['case'], 'examiner': assessment['examiner'], 'mode': assessment['mode']}
+    if assessment['round'] is not None:  # No trial yet means the page opens the first site and trial not signed (D-107).
+        state['trial'] = str(assessment['round'])
+    return {**state, 'site': site} if site in SITE_ORDER else state
+
+
+def assessment_from_url(store):
+    """The assessment and site named in the URL, or (None, None) when anything is missing or malformed."""
+    query = st.query_params
+    case, examiner = clean_code(query.get('case', '')), clean_code(query.get('examiner', ''))
+    mode, trial = query.get('mode'), query.get('trial', '')
+    if not (case and examiner and mode in store.protocol['modes'] and (trial == '' or trial.isdigit() and 1 <= int(trial) <= 99)):
+        return None, None
+    site = query.get('site')
+    return (dict(case=case, examiner=examiner, round=int(trial) if trial else None, mode=mode),
+            site if site in SITE_ORDER else None)
+
+
+def keep_in_url(assessment, site):
+    wanted = url_state(assessment, site)
+    if st.query_params.to_dict() != wanted:
+        st.query_params.from_dict(wanted)
 
 
 def clock(seconds):
@@ -473,7 +544,7 @@ def analysis_panel(result, path, trial_id, signed=False):
         count = round(result['top_score'] * len(windows))
         ending = 'showed no crackle or wheeze' if code == 'N' else 'showed this pattern'
         basis = f'{count} of {len(windows)} overlapping 3-second segments {ending}.'
-    st.caption(f'{basis} This describes the sound only. It is not a diagnosis.')
+    st.caption(f'{basis} The analysis describes the sound and does not make a diagnosis.')
 
 
 # Unsaved work and slow saves (D-098, D-099).

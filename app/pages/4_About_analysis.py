@@ -10,25 +10,37 @@ setup('About the analysis')
 st.title('About the analysis')
 st.markdown('''<div class="prose">
 
-The analysis supports careful listening. It marks parts of a recording that resemble crackles or wheezes so the
-examiner can hear them again. The examiner remains responsible for the documented finding.
+## Purpose
 
-## How it was tested
+The analysis supports careful listening. It marks the parts of a recording that resemble crackles or wheezes, so that
+the examiner can hear those parts again before signing. The examiner remains responsible for the documented finding,
+and the analysis describes the sound without making a diagnosis.
 
-Model cnn_3s_vote_v1 is a small neural network using 3-second segments of 4 kHz sound. A pattern is named only when it
-covers at least 66% of segments. It was trained on the adult training portions of ICBHI 2017 and HF_Lung V1.
+## Model
 
-Locked one-time evaluation on adult recordings, macro-F1: ICBHI test 0.282, HF_Lung test 0.374, and Fraiwan 2021
-external 0.176 (accuracy 0.17).
+The model (version cnn_3s_vote_v1) is a small convolutional neural network. It divides each recording, resampled to
+4 kHz, into overlapping 3-second segments and classifies each segment as no adventitious sound, crackle, wheeze, or
+both. The recording receives the pattern that wins the most segments. If that pattern covers less than 66% of the
+segments, the analysis reports "No clear pattern" instead of naming one. The model was trained on adult recordings
+from the training portions of two public datasets, ICBHI 2017 and HF_Lung V1.
 
-## Known limits
+## Evaluation
 
-- On recordings from other sources, wheezes were often reported as both crackles and wheezes.
-- Holding back a result helped on only one of the three test sets (HF_Lung).
-- Added background noise makes results unstable.
-- It has not been tested on the Hanhong stethoscope.
-- The quality check covers duration, silence and clipping. It cannot reliably identify speech or dominant noise.
-- It does not provide a diagnosis.
+The model was tested once, after it was frozen, on adult recordings it had not seen during training. Performance is
+reported as macro-F1, the average of the F1 scores of the four classes, where 1.0 means every recording was
+classified correctly. The macro-F1 was 0.374 on the HF_Lung test set (1,939 recordings), 0.282 on the ICBHI test set
+(300 recordings), and 0.176 on an external hospital dataset, Fraiwan 2021 (327 recordings), where accuracy was 17%,
+below the 25% expected from guessing.
+
+## Limitations
+
+- On recordings from sources other than HF_Lung, wheezes were mostly reported as crackles and wheezes together.
+- Reporting "No clear pattern" improved accuracy on the HF_Lung test set only; it did not help on the other two sets.
+- Added background noise at 20 dB signal-to-noise ratio changed 35% to 85% of the results, so noisy rooms are a
+  real risk.
+- The model has not been tested on recordings from the Hanhong stethoscope used in this study.
+- The automatic quality check detects recordings that are too short, silent or clipped. It cannot reliably detect
+  speech or dominant room noise, so the examiner must listen before saving.
 
 </div>''', unsafe_allow_html=True)
 footer()

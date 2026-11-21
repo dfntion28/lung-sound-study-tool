@@ -103,6 +103,10 @@ class DriveStore(Store):
         self.state = state
         super().__init__(state.root, **kwargs)
 
+    def _pushed(self, file_name):
+        with self.state.guard:
+            return f'recordings/{file_name}' in self.state.pushed
+
     def _push_recordings(self):
         for path in sorted((self.root / 'recordings').glob('*.wav')):
             name = f'recordings/{path.name}'

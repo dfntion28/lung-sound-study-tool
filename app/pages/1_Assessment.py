@@ -10,53 +10,78 @@ import streamlit.components.v1 as components
 
 from lung_chart import PLACEMENT, chest_chart
 from workflow_ui import (DRAFT_STATUS, FINDINGS, MODE_NAMES, SITE_GROUPS, SITE_NAMES, SITE_ORDER, action_button,
-                         analysis_panel, attach_file, draft_key, drafts, empty_state, fail, flash, flash_text, footer,
-                         get_model, held_anywhere, is_complete, is_conflict, keep_pick, next_retake, parse_trial, picks,
-                         plain_error, prune_saved, qc_words, restore_pick, save_draft, saving_words, setup, site_rows,
-                         site_status, take_failure, unsaved_sites)
+                         analysis_panel, assessment_from_url, attach_file, draft_key, drafts, empty_state, fail, flash, flash_text, footer,
+                         get_model, held_anywhere, is_complete, is_conflict, keep_in_url, keep_pick, next_retake, parse_trial, picks,
+                         next_step, plain_error, prune_saved, qc_words, restore_pick, save_draft, saving_words, session_examiner,
+                         setup, signed_pairs, site_rows, site_status, take_failure, trial_count, unsaved_sites)
 
 store = setup('Assessment')
 assessment = st.session_state.get('assessment')
+if not assessment:  # After a reload the session is new; reopen the case and site named in the URL (D-108).
+    assessment, url_site = assessment_from_url(store)
+    if assessment:
+        st.session_state['assessment'], st.session_state['site'] = assessment, url_site
+        # A reload of the examiner's own tab keeps their code; a different code already in use is refused below.
+        st.session_state.setdefault('examiner', assessment['examiner'])
+        if url_site:
+            st.session_state['chart_view'] = 'front' if url_site.startswith('A') else 'back'
+            st.session_state['focus_work'] = True  # On phones, bring the reopened site into view.
 if not assessment:
     st.title('Assessment')
-    empty_state('No assessment is open', ' Choose or create one on the Assessments screen.')
+    empty_state('No assessment is open', ' Open a saved assessment or start a new one on the Assessments screen.')
+    st.page_link('Home.py', label='Go to Assessments')
+    footer()
+    st.stop()
+if assessment['examiner'] != session_examiner():
+    # Blinding (D-106): another examiner's findings are never opened from this session.
+    st.title('Assessment')
+    empty_state('This assessment is under another examiner code',
+                ' An assessment opens only under the examiner code entered on the Assessments screen, so that '
+                'examiners do not see each other\'s findings.')
     st.page_link('Home.py', label='Go to Assessments')
     footer()
     st.stop()
 
 order = list(SITE_ORDER)
 minimum = store.protocol['min_duration_s']
+if assessment['round'] is None or st.session_state.get('site') not in order:
+    # Open at the first site and trial not signed: site by site, trial 1 then trial 2 (D-107).
+    first_site, first_round = next_step(store, assessment) or (order[0], 1)
+    if assessment['round'] is None:
+        assessment = {**assessment, 'round': first_round}
+        st.session_state['assessment'] = assessment
+        st.session_state['site'] = st.session_state.get('site') if st.session_state.get('site') in order else first_site
+    else:  # A trial was named without a site: its first site not signed.
+        trial_rows = site_rows(store, assessment)
+        st.session_state['site'] = next((s for s in order if not is_complete(trial_rows.get(s))), order[0])
 rows = site_rows(store, assessment)
-site = st.session_state.get('site')
-if site not in order:
-    site = next((s for s in order if not is_complete(rows.get(s))), order[0])
-    st.session_state['site'] = site
-complete = sum(is_complete(rows.get(s)) for s in order)
+site = st.session_state['site']
+keep_in_url(assessment, site)
+trials = trial_count(store, assessment)
+complete = len(signed_pairs(store, assessment))
 st.title(f"Case {assessment['case']}")
-known_rounds = sorted({parse_trial(r['trial_id'])['round'] for r in store.table('rater_study')
-                       if all(parse_trial(r['trial_id'])[k] == assessment[k] for k in ('case', 'examiner', 'mode'))}
-                      | {assessment['round']})
 st.caption(f"Trial {assessment['round']}, {MODE_NAMES[assessment['mode']].lower()}, examiner {assessment['examiner']}. "
-           f'{complete} of {len(order)} sites signed.')
-if len(known_rounds) > 1:
-    chosen_round = st.selectbox('Trial', known_rounds, index=known_rounds.index(assessment['round']),
+           f'{complete} of {len(order) * trials} recordings signed.')
+rounds = list(range(1, trials + 1))
+with st.container(key='trial_pick'):
+    chosen_round = st.selectbox('Trial', rounds, index=rounds.index(assessment['round']),
                                 format_func=lambda n: f'Trial {n}', key=f"round_{assessment['round']}")
-    if chosen_round != assessment['round']:
-        st.session_state['assessment'] = {**assessment, 'round': chosen_round}
-        st.session_state['site'] = None
-        st.rerun()
+if chosen_round != assessment['round']:
+    st.session_state['assessment'] = {**assessment, 'round': chosen_round}  # The site stays: both trials are taken there.
+    st.rerun()
+
+
+def retakes():
+    """Pending retakes, one per assessment and site, so a retake at one site never cancels another (D-109)."""
+    return st.session_state.setdefault('retakes', {})
+
+
+def retake_slot(code):
+    return f"{assessment['case']}_{assessment['examiner']}_{assessment['round']}_{assessment['mode']}_{code}"
 
 
 def side(code):
     return 'Front' if code.startswith('A') else 'Back'
-
-
-def next_open(current):
-    start = order.index(current)
-    for code in order[start + 1:] + order[:start]:
-        if not is_complete(rows.get(code)):
-            return code
-    return None
 
 
 def capture(number=None):
@@ -79,8 +104,12 @@ def capture(number=None):
         st.markdown(f'<p class="problem" role="alert">{qc_words(quality["qc_reason"])}. '
                     f'Record this site again for at least {minimum} seconds.</p>', unsafe_allow_html=True)
     else:
-        st.caption(f"Quality check passed at {quality['duration_s']:.1f} seconds. Listen for talking or room noise.")
+        st.caption(f"The recording passed the automatic quality check ({quality['duration_s']:.1f} seconds). Listen to it "
+                   'before saving, and record again if talking or room noise can be heard.')
         st.audio(draft['data'])
+        # The case and site survive a reload through the URL; the attached file does not (D-098, D-108).
+        st.caption('Save before you leave the browser. If the page reloads, a file that is not saved '
+                   'must be attached again.')
         duplicate = failure and failure['key'] == f'save_{key}' and failure['kind'] == 'duplicate'
         # After a same-file refusal Save cannot succeed; Replace file becomes the main action.
         running = False if duplicate else action_button('Save recording', f'save_{key}')
@@ -97,7 +126,7 @@ def capture(number=None):
                      'Press Save recording to try again.')
             else:
                 drafts().pop(key, None)
-                st.session_state.pop('retake_for', None)
+                retakes().pop(retake_slot(site), None)
                 flash('Recording saved.')
                 st.session_state['focus_work'] = True
                 st.rerun()
@@ -116,7 +145,8 @@ def document(row):
     label = st.radio('Your finding', list(FINDINGS), format_func=FINDINGS.get, index=None, key=key,
                      on_change=keep_pick, args=(key,))
     chosen = f'You chose {FINDINGS[label].lower()}. ' if label else ''
-    st.caption(f'{chosen}This first finding cannot be changed after saving. The analysis runs next.')
+    st.caption(f'{chosen}Your first finding is locked when saved, so that it is recorded before you see the analysis. '
+               'The analysis runs after saving.')
     if action_button('Save and run analysis', f'save_initial_{trial_id}', disabled=label is None):
         try:
             with st.spinner(saving_words(store, 'your finding')):
@@ -147,9 +177,10 @@ def review(row):
     st.subheader('Acoustic analysis')
     analysis_panel(result, store.recording_path(trial_id), trial_id, signed=bool(row['assisted_label']))
     if result['finding'] == 'Q':
-        st.caption(f"The unusable recording stays in the study record. The new one replaces it for trial {assessment['round']}.")
+        st.caption(f"The unusable recording is kept in the study record. Record this site again; the new recording "
+                   f"replaces it for trial {assessment['round']}.")
         if st.button('Record this site again', type='primary', key=f'again_{trial_id}'):
-            st.session_state['retake_for'] = trial_id
+            retakes()[retake_slot(parse_trial(trial_id)['site'])] = trial_id
             st.session_state['focus_work'] = True
             st.rerun()
         return
@@ -163,7 +194,7 @@ def review(row):
     final = st.radio('Choose what you will sign', list(FINDINGS), format_func=FINDINGS.get, index=None, key=key,
                      on_change=keep_pick, args=(key,))
     chosen = f'You will sign {FINDINGS[final].lower()}. ' if final else ''
-    st.caption(f'{chosen}A signed finding cannot be changed.')
+    st.caption(f'{chosen}Once signed, the final finding is locked and becomes part of the study record.')
     if action_button('Sign final finding', f'sign_{trial_id}', disabled=final is None):
         try:
             with st.spinner(saving_words(store, 'your signed finding')):
@@ -186,7 +217,7 @@ failure = take_failure(site)
 def status_of(code):
     row = rows.get(code)
     has_file = any(k.startswith(draft_key(assessment, code, '')) for k in drafts())
-    if has_file and (not row or st.session_state.get('retake_for') == row['trial_id']):
+    if has_file and (not row or retakes().get(retake_slot(code)) == row['trial_id']):
         return DRAFT_STATUS
     return site_status(row)
 
@@ -202,7 +233,8 @@ with st.container(key='sheet'):
         stamped = st.session_state.pop('just_signed', None)
         if stamped:  # The marker of a site just signed fills in with a short stamp.
             st.html(f'<style>.st-key-pick_{stamped} button::before{{animation:stamp .42s cubic-bezier(.16,1,.3,1);}}</style>')
-        st.caption('Site positions are provisional until an expert confirms them.')
+        st.caption('The site positions follow the recording guide and remain provisional until the clinical adviser '
+                   'confirms them.')
         others = [code for code in unsaved if code != site]
         if others:
             with st.container(key='unsaved_sites'):
@@ -213,6 +245,11 @@ with st.container(key='sheet'):
                         if st.button(f'Go to {place(code)}', key=f'goto_{code}'):
                             picked = code
         if picked:
+            # A site opens at its first trial not signed, so trial 2 follows trial 1 there (D-107).
+            done = signed_pairs(store, assessment)
+            open_rounds = [n for n in range(1, trials + 1) if (picked, n) not in done]
+            if picked != site and open_rounds:
+                st.session_state['assessment'] = {**assessment, 'round': open_rounds[0]}
             st.session_state['site'] = picked
             st.session_state['chart_view'] = 'front' if picked.startswith('A') else 'back'
             st.session_state['focus_work'] = True
@@ -229,27 +266,32 @@ with st.container(key='sheet'):
                 st.markdown(f'<p class="problem" role="alert">{escape(failure["message"])}</p>', unsafe_allow_html=True)
             if not row:
                 capture()
-            elif st.session_state.get('retake_for') == row['trial_id']:
+            elif retakes().get(retake_slot(site)) == row['trial_id']:
                 st.markdown(f'<p class="place">{PLACEMENT[site]}</p>', unsafe_allow_html=True)
                 retake = next_retake(store, assessment, site)
                 capture(retake)
                 if st.button('Cancel retake', key=f"cancel_{row['trial_id']}"):
                     drafts().pop(draft_key(assessment, site, retake), None)
-                    st.session_state.pop('retake_for', None)
+                    retakes().pop(retake_slot(site), None)
                     st.rerun()
             elif not row['manual_locked_at']:
                 document(row)
             else:
                 review(row)
                 if row['assisted_label']:
-                    following = next_open(site)
-                    if following and st.button(f'Next site: {place(following)}', type='primary', key=f'next_{site}'):
-                        st.session_state['site'] = following
-                        st.session_state['chart_view'] = 'front' if following.startswith('A') else 'back'
-                        st.session_state['focus_work'] = True
-                        st.rerun()
-                    if not following:
-                        st.markdown('<p class="saved" role="status">All eight sites are signed for this trial.</p>',
+                    following = next_step(store, assessment, (site, assessment['round']))
+                    if following:
+                        code, number = following
+                        words = (f'Trial {number} at this site' if code == site
+                                 else f'Next site: {place(code)}, trial {number}')
+                        if st.button(words, type='primary', key=f"next_{site}_{assessment['round']}"):
+                            st.session_state['assessment'] = {**assessment, 'round': number}
+                            st.session_state['site'] = code
+                            st.session_state['chart_view'] = 'front' if code.startswith('A') else 'back'
+                            st.session_state['focus_work'] = True
+                            st.rerun()
+                    else:
+                        st.markdown(f'<p class="saved" role="status">All eight sites are signed for all {trials} trials.</p>',
                                     unsafe_allow_html=True)
                         st.page_link('Home.py', label='Back to Assessments')
 footer()
