@@ -32,6 +32,8 @@ SITE_GROUPS = (('Anterior chest', ('ARU', 'ALU', 'ARL', 'ALL')),
                ('Posterior chest', ('PRU', 'PLU', 'PRL', 'PLL')))
 SITE_ORDER = tuple(code for _, codes in SITE_GROUPS for code in codes)
 MODE_NAMES = {'BELL': 'Bell', 'DIA': 'Diaphragm'}
+# Public project website (D-087, D-088); the tool links back to it from sign-in and every footer.
+WEBSITE_URL = 'https://lung-sound-study.pages.dev'
 FINDINGS = {'N': 'No adventitious sounds', 'C': 'Crackles', 'W': 'Wheezes',
             'B': 'Crackles and wheezes', 'U': 'Unable to determine'}
 PATTERN_NAMES = {'C': 'Crackle-like', 'W': 'Wheeze-like', 'B': 'Crackle- and wheeze-like'}
@@ -235,6 +237,7 @@ def require_password():
         time.sleep(1)  # Slows password guessing.
         st.error('That password is not correct. Check it and try again.')
     st.caption(NOTICE)
+    st.markdown(f'<p class="foot"><a href="{WEBSITE_URL}">Back to the project website</a></p>', unsafe_allow_html=True)
     st.stop()
 
 
@@ -276,7 +279,8 @@ def setup(title):
 
 
 def footer():
-    st.markdown(f'<p class="foot">{NOTICE} Use study codes only, never names.</p>', unsafe_allow_html=True)
+    st.markdown(f'<p class="foot">{NOTICE} Use study codes only, never names. <a href="{WEBSITE_URL}">Project website</a></p>',
+                unsafe_allow_html=True)
 
 
 def empty_state(title, body):
