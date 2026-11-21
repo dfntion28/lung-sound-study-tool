@@ -1,0 +1,6 @@
+{
+  "status": "provisional — site map needs expert confirmation",
+  "site_codes": ["ARU", "ARL", "ALU", "ALL", "PRU", "PRL", "PLU", "PLL"],
+  "min_duration_s": 15,
+  "modes": ["BELL", "DIA"]
+}

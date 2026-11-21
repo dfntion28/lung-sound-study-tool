@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "status": "frozen",
+  "model_version": "cnn_3s_vote_v1",
+  "frozen_date": "2026-11-07",
+  "frozen_decision": "D-045",
+  "model_family": "small_cnn",
+  "model_file": "model.pt",
+  "model_sha256": "bc58005e125291f862cc357ee45bb492cdaeea405a666c687f67581c65578c64",
+  "classes": [
+    "N",
+    "C",
+    "W",
+    "B"
+  ],
+  "output_classes": [
+    "N",
+    "C",
+    "W",
+    "B",
+    "U"
+  ],
+  "window_s": 3,
+  "hop_s": 1.5,
+  "aggregation": "vote",
+  "confidence": "winning vote fraction",
+  "abstain_threshold": 0.66,
+  "decision_rule": "argmax in N,C,W,B order; output U when winning vote fraction is strictly below 0.66",
+  "abstain_policy": {
+    "decision": "D-039 accepted by the project lead in D-045",
+    "selection_branch": "fallback",
+    "grid": "0.00 to 1.00 inclusive in 0.01 steps",
+    "coverage_floor": 0.7,
+    "a0": 0.4325971058644326,
+    "target_accuracy": 0.4825971058644326,
+    "threshold": 0.66,
+    "coverage": 0.7515866971312516,
+    "retained_accuracy": 0.45211957439621686
+  },
+  "architecture": {
+    "config_version": 2,
+    "channels": [
+      16,
+      32,
+      64,
+      128
+    ],
+    "kernel_size": 3,
+    "dropout": 0.25,
+    "normalization": "per_window_mean_std_floor_1e-6",
+    "sample_rate": 4000,
+    "log_mel_bins": 40
+  },
+  "training": {
+    "population": "adult-only ICBHI train and HF_Lung train after D-034 exclusions",
+    "records": 7878,
+    "patients": 178,
+    "removed_pediatric_icbhi_records": 46,
+    "record_class_counts_n_c_w_b": [
+      2973,
+      2199,
+      1772,
+      934
+    ],
+    "dataset_record_counts": {
+      "hf_lung_v1": 7516,
+      "icbhi2017": 362
+    },
+    "seed": 42,
+    "optimizer": "Adam",
+    "learning_rate": 0.001,
+    "batch_size": 32,
+    "loss": "inverse_fit_window_frequency_cross_entropy",
+    "inner_monitor": "inner_recording_macro_f1_mean_aggregation",
+    "inner_best_epochs_by_outer_fold": [
+      4,
+      8,
+      4,
+      7,
+      5
+    ],
+    "final_refit_epochs": 5
+  },
+  "train_oof_metrics": {
+    "n": 7878,
+    "macro_f1_at_threshold_0": 0.41069268972835515,
+    "accuracy_at_threshold_0": 0.4325971058644326,
+    "per_class_f1_n_c_w_b": [
+      0.4944704779756326,
+      0.38143289606458125,
+      0.4766206163655685,
+      0.2902467685076381
+    ],
+    "hf_lung_macro_f1": 0.4107919243754232,
+    "icbhi_adult_macro_f1": 0.3095283691521205
+  },
+  "provenance": {
+    "manifest": "data/processed/manifest.csv",
+    "manifest_sha256": "7b120474bcc9ad099d6997db4f78f56b10c9ab0296347566a6656cf738be7650",
+    "adult_rerun_report": "reports/phase4_adult_only_cnn_3s_vote.json",
+    "adult_rerun_report_sha256": "f03c8966a7648f0538c204fd0d41b9dd2d7e3e16eeaa1aa57c628f8fc10ef910",
+    "mean_oof": "data/processed/features/adult_oof_cnn_3s.csv",
+    "mean_oof_sha256": "409a98ec2e565abba92ad8d33c6a006bf502d672c172c6a1061f8121c918fcb1",
+    "max_oof": "data/processed/features/adult_oof_cnn_3s_max.csv",
+    "max_oof_sha256": "b5a59a381ecc18d228fb331a3309a878815b04a6b46f9b03c147747581169b40",
+    "vote_oof": "data/processed/features/adult_oof_cnn_3s_vote.csv",
+    "vote_oof_sha256": "5565f4989d1b3bd2b02a56b09f1f4e3737520754b065f5da6b49c8e0a0104be2"
+  },
+  "validation_status": "train-only grouped out-of-fold selection evidence; locked tests, Hanhong/device and clinical evaluation not run"
+}
