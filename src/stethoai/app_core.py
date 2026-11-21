@@ -168,6 +168,21 @@ def analyze(path, model, progress=None):
     return result
 
 
+# Listen-again sites (D-119): 2 front and 2 back sites per case, examiner and mode, drawn by a fixed seeded order
+# before anything is recorded, so the repeats never depend on a finding, a model version or a code rule change.
+REPEAT_SIDES = (('ARU', 'ALU', 'ARL', 'ALL'), ('PRU', 'PLU', 'PRL', 'PLL'))
+REPEATS_PER_SIDE = 2
+
+
+def repeat_sites(case, examiner, mode):
+    """The sites that get a second recording, in recording order. sha256, not hash(), so it is stable across runs."""
+    chosen = set()
+    for codes in REPEAT_SIDES:
+        ranked = sorted(codes, key=lambda code: hashlib.sha256(f'{case}|{examiner}|{mode}|{code}'.encode()).hexdigest())
+        chosen.update(ranked[:REPEATS_PER_SIDE])
+    return tuple(code for codes in REPEAT_SIDES for code in codes if code in chosen)
+
+
 def _code(value):
     value = str(value)
     if not re.fullmatch(r'[A-Z][A-Z0-9]{0,15}', value):
@@ -497,8 +512,22 @@ class Store:
 
     @_serialized
     def review_queue(self):
-        return [r for r in self.table('rater_study') if r['ai_prediction_id'] and
-                (r['manual_label'] != r['ai_finding'] or r['manual_label'] == 'U' or r['ai_finding'] == 'U')]
+        rows = self.table('rater_study')
+        return [r for r in rows if (r['ai_prediction_id'] and
+                (r['manual_label'] != r['ai_finding'] or r['manual_label'] == 'U' or r['ai_finding'] == 'U'))
+                or self._repeat_differs(r, rows)]
+
+    def _repeat_differs(self, row, rows):
+        """A second recording whose signed finding differs from the signed first recording at that site (D-119)."""
+        if not row['assisted_label']:
+            return False
+        case, site, attempt, mode = self.recording_id(row['trial_id']).split('_')
+        if self.base_trial(int(attempt[1:])) < 2:
+            return False
+        firsts = [(int(a[1:]), r) for r in rows for c, s, a, m in [self.recording_id(r['trial_id']).split('_')]
+                  if (c, s, m, r['rater_code']) == (case, site, mode, row['rater_code']) and self.base_trial(int(a[1:])) == 1]
+        first = max(firsts, key=lambda pair: pair[0])[1] if firsts else None
+        return bool(first and first['assisted_label'] and first['assisted_label'] != row['assisted_label'])
 
     @_serialized
     def previous_recording(self, case, site, before_trial, rater=None):

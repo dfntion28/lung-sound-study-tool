@@ -9,11 +9,11 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from lung_chart import PLACEMENT, chest_chart
-from workflow_ui import (DRAFT_STATUS, FINDINGS, MODE_NAMES, SITE_GROUPS, SITE_NAMES, SITE_ORDER, action_button,
+from workflow_ui import (DRAFT_STATUS, LISTEN_AGAIN, open_number, recording_words, steps_at, walk, FINDINGS, MODE_NAMES, SITE_GROUPS, SITE_NAMES, SITE_ORDER, action_button,
                          analysis_panel, assessment_from_url, attach_file, draft_key, drafts, empty_state, fail, flash, flash_text, footer,
                          AnalysisTrace, record_place, get_model, model_state, held_anywhere, is_complete, is_conflict, keep_in_url, keep_pick, next_retake, parse_trial, picks,
                          next_step, plain_error, prune_saved, qc_words, restore_pick, save_draft, saving_words, session_examiner,
-                         setup, signed_pairs, site_rows, site_status, take_failure, trial_count, unsaved_sites)
+                         setup, signed_pairs, site_rows, site_status, take_failure, unsaved_sites)
 
 store = setup('Assessment')
 assessment = st.session_state.get('assessment')
@@ -43,32 +43,24 @@ if assessment['examiner'] != session_examiner():
 
 order = list(SITE_ORDER)
 minimum = store.protocol['min_duration_s']
-if assessment['round'] is None or st.session_state.get('site') not in order:
-    # Open at the first site and trial not signed: site by site, trial 1 then trial 2 (D-107).
+if st.session_state.get('site') not in order:
+    # Open at the first recording not signed, in recording order (D-119).
     first_site, first_round = next_step(store, assessment) or (order[0], 1)
+    st.session_state['site'] = first_site
     if assessment['round'] is None:
         assessment = {**assessment, 'round': first_round}
-        st.session_state['assessment'] = assessment
-        st.session_state['site'] = st.session_state.get('site') if st.session_state.get('site') in order else first_site
-    else:  # A trial was named without a site: its first site not signed.
-        trial_rows = site_rows(store, assessment)
-        st.session_state['site'] = next((s for s in order if not is_complete(trial_rows.get(s))), order[0])
-rows = site_rows(store, assessment)
 site = st.session_state['site']
+if assessment['round'] not in steps_at(store, assessment, site):
+    # No recording number, or one this site does not take (a second recording only where drawn, D-119).
+    assessment = {**assessment, 'round': open_number(store, assessment, site)}
+st.session_state['assessment'] = assessment
+rows = site_rows(store, assessment)
 keep_in_url(assessment, site)
-trials = trial_count(store, assessment)
+steps = walk(store, assessment)
 complete = len(signed_pairs(store, assessment))
 st.title(f"Case {assessment['case']}")
-st.caption(f"Trial {assessment['round']}, {MODE_NAMES[assessment['mode']].lower()}, examiner {assessment['examiner']}. "
-           f'{complete} of {len(order) * trials} recordings signed.')
-# Two joined buttons, one tap each: a dropdown opened a text box and the phone keyboard for a two-way choice (D-112).
-st.markdown('<p class="seg-label">Trial</p>', unsafe_allow_html=True)
-with st.container(key='trial_switch', horizontal=True):
-    for number in range(1, trials + 1):
-        current = number == assessment['round']
-        if st.button(f'Trial {number}', key=f'trial_pick_{number}', type='primary' if current else 'secondary') and not current:
-            st.session_state['assessment'] = {**assessment, 'round': number}  # The site stays: both trials are taken there.
-            st.rerun()
+st.caption(f"{MODE_NAMES[assessment['mode']]}, examiner {assessment['examiner']}. "
+           f'{complete} of {len(steps)} recordings signed.')
 
 
 def retakes():
@@ -179,7 +171,7 @@ def review(row):
     st.subheader('Acoustic analysis')
     analysis_panel(result, store.recording_path(trial_id), trial_id, signed=bool(row['assisted_label']))
     if result['finding'] == 'Q':
-        st.caption(f"The unusable recording stays in the study record; the new one replaces it for trial {assessment['round']}.")
+        st.caption('The unusable recording stays in the study record, and the new one replaces it here.')
         if st.button('Record this site again', type='primary', key=f'again_{trial_id}'):
             retakes()[retake_slot(parse_trial(trial_id)['site'])] = trial_id
             st.session_state['focus_work'] = True
@@ -215,11 +207,21 @@ failure = take_failure(site)
 
 
 def status_of(code):
-    row = rows.get(code)
+    number = assessment['round'] if code == site else open_number(store, assessment, code)
+    row = rows.get(code) if code == site else site_rows(store, {**assessment, 'round': number}).get(code)
+    if not row and number >= 2 and not any(k.startswith(draft_key(assessment, code, '')) for k in drafts()):
+        return LISTEN_AGAIN
     has_file = any(k.startswith(draft_key(assessment, code, '')) for k in drafts())
     if has_file and (not row or retakes().get(retake_slot(code)) == row['trial_id']):
         return DRAFT_STATUS
     return site_status(row)
+
+
+def where_words():
+    """Placement for a first recording; the repeat instruction for a second one (D-119: no cough, same breathing)."""
+    if assessment['round'] >= 2:
+        return 'Lift the chestpiece, place it again at the same spot, and record without a cough.'
+    return PLACEMENT[site]
 
 
 def place(code):
@@ -243,11 +245,9 @@ with st.container(key='sheet'):
                         if st.button(f'Go to {place(code)}', key=f'goto_{code}'):
                             picked = code
         if picked:
-            # A site opens at its first trial not signed, so trial 2 follows trial 1 there (D-107).
-            done = signed_pairs(store, assessment)
-            open_rounds = [n for n in range(1, trials + 1) if (picked, n) not in done]
-            if picked != site and open_rounds:
-                st.session_state['assessment'] = {**assessment, 'round': open_rounds[0]}
+            # A site opens at its first recording not signed, else its last (D-119).
+            if picked != site:
+                st.session_state['assessment'] = {**assessment, 'round': open_number(store, assessment, picked)}
             st.session_state['site'] = picked
             st.session_state['chart_view'] = 'front' if picked.startswith('A') else 'back'
             st.session_state['focus_work'] = True
@@ -259,13 +259,22 @@ with st.container(key='sheet'):
             st.markdown(f'<p class="work-site">{side(site)}, {SITE_NAMES[site].lower()}</p>'
                         f'<p class="work-meta" role="status">' + (f'<span class="saved">{note}</span> ' if note else '')
                         + f'{status_of(site)}</p>'
-                        + (f'<p class="place">{PLACEMENT[site]}</p>' if not row else ''), unsafe_allow_html=True)
+                        + (f'<p class="place">{where_words()}</p>' if not row else ''), unsafe_allow_html=True)
+            numbers = steps_at(store, assessment, site)
+            if len(numbers) > 1:  # Two joined buttons, one per recording at this site (the former trial pair, D-112).
+                with st.container(key='trial_switch', horizontal=True):
+                    for number in numbers:
+                        current = number == assessment['round']
+                        if st.button(recording_words(number).capitalize(), key=f'trial_pick_{number}',
+                                     type='primary' if current else 'secondary') and not current:
+                            st.session_state['assessment'] = {**assessment, 'round': number}
+                            st.rerun()
             if failure:
                 st.markdown(f'<p class="problem" role="alert">{escape(failure["message"])}</p>', unsafe_allow_html=True)
             if not row:
                 capture()
             elif retakes().get(retake_slot(site)) == row['trial_id']:
-                st.markdown(f'<p class="place">{PLACEMENT[site]}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p class="place">{where_words()}</p>', unsafe_allow_html=True)
                 retake = next_retake(store, assessment, site)
                 capture(retake)
                 if st.button('Cancel retake', key=f"cancel_{row['trial_id']}"):
@@ -280,8 +289,10 @@ with st.container(key='sheet'):
                     following = next_step(store, assessment, (site, assessment['round']))
                     if following:
                         code, number = following
-                        words = (f'Trial {number} at this site' if code == site
-                                 else f'Next site: {place(code)}, trial {number}')
+                        words = (f'Listen again: {place(code)}' if number >= 2 else f'Next site: {place(code)}')
+                        if side(code) != side(site) and number == 1:
+                            st.caption('Turn the patient to record the back.' if code.startswith('P')
+                                       else 'Turn the patient to record the front.')
                         if st.button(words, type='primary', key=f"next_{site}_{assessment['round']}"):
                             st.session_state['assessment'] = {**assessment, 'round': number}
                             st.session_state['site'] = code
@@ -289,13 +300,20 @@ with st.container(key='sheet'):
                             st.session_state['focus_work'] = True
                             st.rerun()
                     else:
-                        st.markdown(f'<p class="saved" role="status">All eight sites are signed for all {trials} trials.</p>',
+                        st.markdown(f'<p class="saved" role="status">All {len(steps)} recordings are signed.</p>',
                                     unsafe_allow_html=True)
                         st.page_link('pages/0_Assessments.py', label='Back to Assessments')
 footer()
 # A refresh or closed tab would lose unsaved work, so the browser asks first while any is held.
 components.html(f'<script>/*{time.time_ns()}*/window.parent.onbeforeunload='
                 + ('function(e){e.preventDefault();e.returnValue="";}' if unsaved or held_anywhere() else 'null') + ';</script>', height=0)
+# Joined pairs (Front/Back, First/Second recording) announce the chosen button, not only its colour (WCAG 4.1.2).
+components.html('<script>const d=window.parent.document;const mark=()=>d.querySelectorAll('
+                '".st-key-view_switch button,.st-key-trial_switch button").forEach(b=>{const p=String((b.dataset.testid||"")'
+                '.includes("primary"));if(b.getAttribute("aria-pressed")!==p)b.setAttribute("aria-pressed",p);});mark();'
+                'if(window.parent.__pressedWatch)window.parent.__pressedWatch.disconnect();'
+                'window.parent.__pressedWatch=new MutationObserver(mark);window.parent.__pressedWatch.observe(d.body,'
+                '{subtree:true,childList:true,attributes:true,attributeFilter:["data-testid","class"]});</script>', height=0)
 if st.session_state.pop('focus_work', False):
     # On phones the work sits below the chart; bring the chosen site into view.
     components.html(f'<script>/*{time.time_ns()}*/const w=window.parent.document.querySelector(".st-key-work");'

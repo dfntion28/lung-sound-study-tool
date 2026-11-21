@@ -9,8 +9,8 @@ from workflow_ui import (MODE_NAMES, SITE_NAMES, empty_state, footer, is_replace
 
 store = setup('Follow-up')
 st.title('Follow-up')
-st.markdown('<p class="prose">Listen again to these recordings: your first finding and the analysis disagreed, '
-            'or one was uncertain.</p>', unsafe_allow_html=True)
+st.markdown('<p class="prose">Each recording here differs from its analysis or from the other recording at its site, '
+            'or is uncertain.</p>', unsafe_allow_html=True)
 examiner = session_examiner()
 all_rows = store.table('rater_study')
 # Blinding (D-106): another examiner's recordings and findings are not listed here.

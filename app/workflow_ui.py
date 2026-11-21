@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / 'src') not in sys.path:
     sys.path.insert(0, str(ROOT / 'src'))
 
-from stethoai.app_core import LABELS, MANUAL_LABELS, Store, check_audio, decodable, load_model
+from stethoai.app_core import LABELS, MANUAL_LABELS, Store, check_audio, decodable, load_model, repeat_sites
 from stethoai.drive_store import DriveClient, DriveError, DriveState, DriveStore
 
 PRODUCT = 'Lung Sound Record'
@@ -47,9 +47,9 @@ SEGMENT_FILL = {'C': '#a4560c', 'W': '#1b578a', 'B': '#792d60'}
 # Analysis display: (css class, headline, guidance).
 FINDING_STYLE = {
     'N': ('normal', 'No crackle or wheeze pattern', 'No times were marked.'),
-    'C': ('crackle', 'Crackle-like sound', 'Listen again at the marked times before you sign.'),
-    'W': ('wheeze', 'Wheeze-like sound', 'Listen again at the marked times before you sign.'),
-    'B': ('both', 'Crackle-like and wheeze-like sound', 'Listen again at the marked times before you sign.'),
+    'C': ('crackle', 'Crackle-like sound', 'Play the marked times again before you sign.'),
+    'W': ('wheeze', 'Wheeze-like sound', 'Play the marked times again before you sign.'),
+    'B': ('both', 'Crackle-like and wheeze-like sound', 'Play the marked times again before you sign.'),
     'U': ('uncertain', 'No clear pattern', 'No pattern was strong enough to name. Rely on what you heard.'),
     'Q': ('qcfail', 'Recording not usable', 'The analysis did not run on this recording.'),
 }
@@ -405,8 +405,13 @@ def is_replaced(row, all_rows):
                for other in (parse_trial(r['trial_id']) for r in all_rows))
 
 
+def recording_words(number):
+    """Examiner words for a protocol recording number; the word trial is never shown (D-119)."""
+    return {1: 'first recording', 2: 'second recording'}.get(number, f'recording {number}')
+
+
 def trial_words(info):
-    return f"trial {info['round']}" + (' retake' if info['retake'] else '')
+    return recording_words(info['round']) + (', recorded again' if info['retake'] else '')
 
 
 def site_status(row):
@@ -436,19 +441,43 @@ def own_rows(store):
     return [r for r in store.table('rater_study') if code and parse_trial(r['trial_id'])['examiner'] == code]
 
 
-# Trial order (D-107): at each site trial 1, then trial 2 after lifting and replacing the chestpiece (guide section 4).
-TRIALS = 2
+# Recording order (D-119): the four front sites once, then a second recording at the two front sites drawn for this
+# assessment, then the same on the back. Only one turn of the patient. Records made before D-119 keep every
+# recording they hold, so an older case with a second recording at all eight sites still shows them.
+LISTEN_AGAIN = 'Second recording needed'  # A state, like the other statuses; the step button says Listen again.
 
 
-def trial_count(store, assessment):
-    """Two trials per site, or more where an older record used a higher trial number."""
-    infos = (parse_trial(r['trial_id']) for r in store.table('rater_study'))
-    return max([TRIALS, *(i['round'] for i in infos if all(i[k] == assessment[k] for k in ('case', 'examiner', 'mode')))])
+def held_numbers(store, assessment):
+    """Protocol recording numbers already stored per site for this case, examiner and mode."""
+    held = {}
+    for row in store.table('rater_study'):
+        info = parse_trial(row['trial_id'])
+        if all(info[k] == assessment[k] for k in ('case', 'examiner', 'mode')):
+            held.setdefault(info['site'], set()).add(info['round'])
+    return held
 
 
 def walk(store, assessment):
-    """Every site and trial in recording order: site by site, trial 1 then trial 2."""
-    return [(site, n) for site in SITE_ORDER for n in range(1, trial_count(store, assessment) + 1)]
+    """Every site and recording number in recording order."""
+    chosen, held, steps = repeat_sites(assessment['case'], assessment['examiner'], assessment['mode']), held_numbers(store, assessment), []
+    for _, codes in SITE_GROUPS:
+        steps += [(code, 1) for code in codes]
+        for code in codes:
+            numbers = held.get(code, set()) | ({2} if code in chosen else set())
+            steps += [(code, n) for n in sorted(numbers) if n >= 2]
+    return steps
+
+
+def side_open(site, done):
+    """Second recordings on a side open only once its four first recordings are signed (D-120, no back-to-back repeat)."""
+    codes = next(codes for _, codes in SITE_GROUPS if site in codes)
+    return all((code, 1) in done for code in codes)
+
+
+def steps_at(store, assessment, site):
+    """Recording numbers this site can open now: the first, and a second once its side is ready or one is held."""
+    done, held = signed_pairs(store, assessment), held_numbers(store, assessment).get(site, set())
+    return [n for code, n in walk(store, assessment) if code == site and (n == 1 or n in held or side_open(site, done))]
 
 
 def signed_pairs(store, assessment):
@@ -457,10 +486,18 @@ def signed_pairs(store, assessment):
 
 
 def next_step(store, assessment, after=None):
-    """The first site and trial not signed, starting after the given pair and wrapping round."""
+    """The earliest site and recording not signed that can open now, in recording order (D-120).
+
+    `after` is the step just signed; it is never offered again. A site skipped earlier is offered before later ones."""
     steps, done = walk(store, assessment), signed_pairs(store, assessment)
-    start = steps.index(after) + 1 if after in steps else 0
-    return next((step for step in steps[start:] + steps[:start] if step not in done), None)
+    return next((step for step in steps if step not in done and step != after
+                 and (step[1] == 1 or side_open(step[0], done))), None)
+
+
+def open_number(store, assessment, site):
+    """The recording a site opens at: its first not signed, else its last (D-119)."""
+    numbers, done = steps_at(store, assessment, site), signed_pairs(store, assessment)
+    return next((n for n in numbers if (site, n) not in done), numbers[-1])
 
 
 def open_assessment(case, examiner, round_number, mode, site=None):
@@ -690,9 +727,9 @@ def analysis_panel(result, path, trial_id, signed=False):
     if code == 'Q':
         guidance = f"{qc_words(result['qc_reason'])}."
     elif code == 'N' and segments:
-        guidance = 'Most of the recording showed no pattern. Listen again at the marked times before you sign.'
+        guidance = 'Most of the recording showed no pattern. Play the marked times again before you sign.'
     if signed:  # After signing, the marked times are a record, not an instruction.
-        guidance = guidance.replace('Listen again at the marked times before you sign.',
+        guidance = guidance.replace('Play the marked times again before you sign.',
                                     'The marked times show where the pattern was found.')
     st.markdown(f'<div class="pattern {css}" role="status">'
                 f'<div><b>{escape(title)}</b><span class="why">{escape(guidance)}</span></div></div>',
@@ -867,7 +904,7 @@ def flash_text():
 
 
 PLAIN_ERRORS = {
-    'Recording exists': 'A different recording is already stored for this site and trial.',
+    'Recording exists': 'A different file is already stored for this recording at this site.',
     'Final finding is already signed': 'This site was already signed with another finding, perhaps from another screen.',
     'Manual label is locked': 'A different first finding was already saved for this site, perhaps from another screen.',
 }
@@ -881,7 +918,7 @@ def plain_error(error):
         try:
             _, code, attempt, _ = rid.split('_')
             where = (f"{'front' if code.startswith('A') else 'back'}, {SITE_NAMES[code].lower()}, "
-                     f'trial {Store.base_trial(int(attempt[1:]))}')
+                     f'{recording_words(Store.base_trial(int(attempt[1:])))}')
         except (ValueError, KeyError):
             return text
         return f'This file is already saved for {where}.'

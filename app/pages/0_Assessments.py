@@ -6,12 +6,11 @@ from collections import defaultdict
 
 import streamlit as st
 
-from workflow_ui import (MODE_HELP, MODE_NAMES, MODE_ORDER, clean_code, empty_state, footer, held_anywhere, is_complete,
-                         open_assessment, own_rows, parse_trial, session_examiner, setup, trial_count)
+from workflow_ui import (MODE_HELP, MODE_NAMES, MODE_ORDER, clean_code, empty_state, footer, held_anywhere,
+                         open_assessment, own_rows, parse_trial, session_examiner, setup, signed_pairs, walk)
 
 store = setup('Assessments')
 st.title('Assessments')
-sites = store.protocol['site_codes']
 examiner = session_examiner()
 if not examiner:
     # Blinding (D-106): the code is entered once per session and only its own records are listed.
@@ -54,7 +53,7 @@ with right:
         mode = st.radio('Stethoscope mode', modes, format_func=MODE_NAMES.get, index=modes.index('DIA'),
                         captions=[MODE_HELP[m] for m in modes], key='mode_choice')
         start = st.form_submit_button('Start assessment', type='primary')
-    st.caption('Each site is recorded twice. Lift and place the chestpiece again before trial 2.')
+    st.caption('Each site is recorded once, then four sites are recorded a second time.')
     if start:
         case_code = clean_code(case)
         if not case_code:
@@ -71,8 +70,8 @@ with left:
     if not groups:
         empty_state('No assessments yet', ' Enter a case code to start one.')
     for case_code, mode in sorted(groups):
-        total = len(sites) * trial_count(store, dict(case=case_code, examiner=examiner, mode=mode))
-        done = sum(is_complete(row) for row in groups[(case_code, mode)])
+        opened = dict(case=case_code, examiner=examiner, mode=mode)
+        total, done = len(walk(store, opened)), len(signed_pairs(store, opened))
         label = f'Case {case_code}, {MODE_NAMES[mode].lower()}. {done} of {total} recordings signed.'
         with st.container(key=f'row_home_{case_code}_{mode}'):
             if st.button(label, key=f'open_{case_code}_{mode}'):
